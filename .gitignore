@@ -1,20 +1,25 @@
+# =========================
 # Python
+# =========================
+.venv/
+venv/
 __pycache__/
 *.py[cod]
-
-# Virtual environments
-venv/
-.venv/
 
 # Jupyter
 .ipynb_checkpoints/
 
-# Environment variables
-.env
+# =========================
+# Source dataset
+# =========================
+data/raw/contrib-versions/
 
-# Large raw data
-data/raw/
-
-# OS files
+# =========================
+# OS / Editor
+# =========================
 .DS_Store
 Thumbs.db
+.vscode/
+
+# Environment variables
+.env
