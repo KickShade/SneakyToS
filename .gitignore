@@ -6,13 +6,38 @@ venv/
 __pycache__/
 *.py[cod]
 
+# =========================
 # Jupyter
+# =========================
 .ipynb_checkpoints/
 
 # =========================
-# Source dataset
+# Large source dataset
 # =========================
 data/raw/contrib-versions/
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite-wal
+*.sqlite-shm
+*.xz
+
+# =========================
+# Large generated research data
+# =========================
+data/raw/
+data/intermediate/
+data/large/
+*.parquet
+
+# Local experiment outputs
+candidate_out_v1/
+qc_out_v3/
+qc_out_v3_fixed/
+alignment_diagnostics/
+
+# Large generated CSVs
+segmented_policy_clauses.csv
 
 # =========================
 # OS / Editor
@@ -21,5 +46,7 @@ data/raw/contrib-versions/
 Thumbs.db
 .vscode/
 
+# =========================
 # Environment variables
+# =========================
 .env
