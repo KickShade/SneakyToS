@@ -291,8 +291,6 @@ SneakyToS was designed, engineered, and developed by:
 - **Arjun Haridas**
 - **Dany Binu Luke**
 
-*Natural Language Processing Research & Engineering Project.*
-
 ---
 
 ## 🤝 Collaboration & Inquiries
