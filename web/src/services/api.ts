@@ -1,40 +1,28 @@
 // ============================================================================
 // SneakyToS — Axios API Client
+// Contract: http://127.0.0.1:8000 (FastAPI backend)
 // ============================================================================
 
 import axios from 'axios';
+import type { HealthResponse } from '@/types';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_API_URL ||
+  'http://127.0.0.1:8000';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  timeout: 30000,
+  // Note: Do not set default Content-Type so multipart/form-data sets boundary correctly
+  timeout: 180000, // 3 minutes timeout for NLP inference
 });
 
-// Request interceptor — attach auth token if available
-apiClient.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('sneakytos_token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
-
-// Response interceptor — handle common errors
-apiClient.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('sneakytos_token');
-    }
-    return Promise.reject(error);
-  }
-);
+/**
+ * Health check endpoint: GET /health
+ */
+export async function checkBackendHealth(): Promise<HealthResponse> {
+  const response = await apiClient.get<HealthResponse>('/health');
+  return response.data;
+}
 
 export default apiClient;

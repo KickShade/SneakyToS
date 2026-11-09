@@ -1,112 +1,154 @@
 // ============================================================================
 // SneakyToS — Comparison API Service & Backend Integration Layer
+// Real contract: POST /api/v1/compare (docs/api_handover.md)
 // ============================================================================
 
+import axios from 'axios';
 import apiClient from './api';
-import {
-  mockDetailedComparison,
-  mockPrivacyReport,
-} from './mockData';
-import type { Comparison, PrivacyReport } from '@/types';
+import type { CompareResponse } from '@/types';
 
-export interface CompareRequestMetadata {
-  companyName: string;
-  policyTitle: string;
-  baselineDate?: string;
-  revisedDate?: string;
-}
+export const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MiB
+export const SUPPORTED_EXTENSIONS = ['.txt', '.pdf'];
 
-export interface BackendComparisonResponse {
-  comparisonId: string;
-  status: 'queued' | 'processing' | 'completed' | 'failed';
-  totalDiscrepancies: number;
-  data?: Comparison;
+export class ComparisonApiError extends Error {
+  status?: number;
+  detail: string;
+
+  constructor(message: string, status?: number, detail?: string) {
+    super(message);
+    this.name = 'ComparisonApiError';
+    this.status = status;
+    this.detail = detail || message;
+  }
 }
 
 /**
- * Initiates document comparison via FastAPI backend.
- * Gracefully falls back to verifiable mock data if backend server is unreachable.
+ * Validates file extension and size before submitting to the backend.
  */
-export async function startComparison(
-  oldFile: File | null,
-  newFile: File | null,
-  metadata: CompareRequestMetadata
-): Promise<{ comparisonId: string; isMock: boolean }> {
-  try {
-    const formData = new FormData();
-    if (oldFile) formData.append('old_policy', oldFile);
-    if (newFile) formData.append('new_policy', newFile);
-    formData.append('company_name', metadata.companyName);
-    formData.append('policy_title', metadata.policyTitle);
+export function validatePolicyFile(file: File): { isValid: boolean; error?: string } {
+  if (!file) {
+    return { isValid: false, error: 'No file provided.' };
+  }
 
-    const res = await apiClient.post<BackendComparisonResponse>(
-      '/comparisons',
-      formData,
-      {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+  const name = file.name.toLowerCase();
+  const hasValidExt = SUPPORTED_EXTENSIONS.some((ext) => name.endsWith(ext));
+
+  if (!hasValidExt) {
+    return {
+      isValid: false,
+      error: `Invalid file format "${file.name}". Only .txt and .pdf files are supported.`,
+    };
+  }
+
+  if (file.size === 0) {
+    return {
+      isValid: false,
+      error: `File "${file.name}" is empty (0 bytes).`,
+    };
+  }
+
+  if (file.size > MAX_FILE_SIZE) {
+    return {
+      isValid: false,
+      error: `File "${file.name}" exceeds the 20 MB limit (${(file.size / (1024 * 1024)).toFixed(1)} MB).`,
+    };
+  }
+
+  return { isValid: true };
+}
+
+/**
+ * Executes full policy comparison via FastAPI POST /api/v1/compare.
+ * Sends multipart/form-data with `old_policy` and `new_policy`.
+ */
+export async function comparePolicies(
+  oldFile: File,
+  newFile: File
+): Promise<CompareResponse> {
+  // Client-side preflight validation
+  const oldVal = validatePolicyFile(oldFile);
+  if (!oldVal.isValid) {
+    throw new ComparisonApiError(oldVal.error || 'Invalid baseline document', 400, oldVal.error);
+  }
+
+  const newVal = validatePolicyFile(newFile);
+  if (!newVal.isValid) {
+    throw new ComparisonApiError(newVal.error || 'Invalid revised document', 400, newVal.error);
+  }
+
+  const formData = new FormData();
+  formData.append('old_policy', oldFile, oldFile.name);
+  formData.append('new_policy', newFile, newFile.name);
+
+  try {
+    const response = await apiClient.post<CompareResponse>(
+      '/api/v1/compare',
+      formData
+      // Note: do not set Content-Type header manually; browser provides multipart boundary
+    );
+
+    return response.data;
+  } catch (err: unknown) {
+    if (axios.isAxiosError(err)) {
+      const status = err.response?.status;
+      const responseDetail = err.response?.data?.detail;
+
+      if (!err.response) {
+        // Network offline / connection refused
+        throw new ComparisonApiError(
+          'Cannot connect to SneakyToS backend server at ' +
+            apiClient.defaults.baseURL +
+            '. Please ensure the FastAPI server is running.',
+          0,
+          'Network connection error'
+        );
       }
-    );
 
-    return {
-      comparisonId: res.data.comparisonId,
-      isMock: false,
-    };
-  } catch {
-    console.info(
-      '[SneakyToS API] Backend offline or unreachable. Utilizing volatile local comparison session (comp-omnicloud-v3-v4).'
+      if (status === 400) {
+        throw new ComparisonApiError(
+          responseDetail || 'Invalid policy input: TXT or text-based PDF required.',
+          400,
+          responseDetail
+        );
+      }
+
+      if (status === 413) {
+        throw new ComparisonApiError(
+          responseDetail || 'Document exceeds the 20 MB size limit.',
+          413,
+          responseDetail
+        );
+      }
+
+      if (status === 422) {
+        throw new ComparisonApiError(
+          responseDetail || 'Validation error: required files (old_policy, new_policy) missing.',
+          422,
+          responseDetail
+        );
+      }
+
+      if (status === 500) {
+        throw new ComparisonApiError(
+          responseDetail || 'Policy comparison analysis pipeline encountered an error.',
+          500,
+          responseDetail
+        );
+      }
+
+      throw new ComparisonApiError(
+        responseDetail || err.message || 'Comparison request failed.',
+        status,
+        responseDetail
+      );
+    }
+
+    if (err instanceof ComparisonApiError) {
+      throw err;
+    }
+
+    throw new ComparisonApiError(
+      err instanceof Error ? err.message : 'Unexpected error during policy comparison.'
     );
-    return {
-      comparisonId: mockDetailedComparison.id,
-      isMock: true,
-    };
   }
 }
-
-/**
- * Fetches full forensic comparison results by ID.
- */
-export async function getComparisonById(id: string): Promise<{ data: Comparison; isMock: boolean }> {
-  try {
-    const res = await apiClient.get<Comparison>(`/comparisons/${id}`);
-    return {
-      data: res.data,
-      isMock: false,
-    };
-  } catch {
-    console.info(
-      `[SneakyToS API] Fetching comparison "${id}" from high-fidelity local state.`
-    );
-    return {
-      data: mockDetailedComparison,
-      isMock: true,
-    };
-  }
-}
-
-/**
- * Fetches privacy impact audit report by comparison ID.
- */
-export async function getPrivacyReportByComparisonId(
-  comparisonId: string
-): Promise<{ data: PrivacyReport; isMock: boolean }> {
-  try {
-    const res = await apiClient.get<PrivacyReport>(
-      `/comparisons/${comparisonId}/privacy-report`
-    );
-    return {
-      data: res.data,
-      isMock: false,
-    };
-  } catch {
-    console.info(
-      `[SneakyToS API] Generating privacy impact report from local audit engine.`
-    );
-    return {
-      data: mockPrivacyReport,
-      isMock: true,
-    };
-  }
-}
-

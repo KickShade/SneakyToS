@@ -1,10 +1,11 @@
 // ============================================================================
 // SneakyToS — TypeScript Type Definitions
+// Aligned with Backend API Specification & Google Stitch UI Blueprints
 // ============================================================================
 
-// === Enums / Union Types ===
+// === Core Classification Types ===
 
-export type ChangeType = 'ADDED' | 'MODIFIED' | 'DELETED';
+export type ChangeType = 'ADDED' | 'MODIFIED' | 'DELETED' | 'RESTRUCTURED';
 
 export type EventValidity =
   | 'VALID'
@@ -22,158 +23,159 @@ export type PrivacyImpact =
   | 'NO_PRIVACY_EFFECT'
   | 'UNCLEAR';
 
-export type RiskLevel = 'critical' | 'high' | 'medium' | 'low' | 'info';
+export type ConfidenceLevel = 'HIGH' | 'MEDIUM' | 'LOW';
 
-export type ComparisonStatus = 'completed' | 'in_progress' | 'failed' | 'queued';
+export type SeverityLevel = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'NEUTRAL';
 
-// === Document & Policy Types ===
+// === Backend API Response Types (Contract: docs/api_handover.md) ===
 
-export interface PolicyDocument {
-  id: string;
-  companyName: string;
-  policyType: string;
+export interface PolicyMetadata {
+  filename: string;
+  file_type: string;
   version: string;
-  capturedAt: string;
-  sourceUrl?: string;
-  content: string;
-  clauseCount: number;
+  character_count: number;
+  word_count: number;
+  clause_count: number;
 }
 
-export interface PolicyClause {
-  id: string;
-  sectionNumber: string;
-  sectionTitle: string;
-  content: string;
-  lineStart: number;
-  lineEnd: number;
+export interface PrivacyImpactCounts {
+  PRIVACY_WORSE: number;
+  PRIVACY_BETTER: number;
+  NO_PRIVACY_EFFECT: number;
+  UNCLEAR: number;
 }
 
-// === Comparison Types ===
-
-export interface Comparison {
-  id: string;
-  companyName: string;
-  policyType: string;
-  oldVersion: PolicyDocument;
-  newVersion: PolicyDocument;
-  status: ComparisonStatus;
-  createdAt: string;
-  completedAt?: string;
-  totalChanges: number;
-  riskScore: number;
-  changes: Change[];
+export interface CompareSummary {
+  total_changes: number;
+  valid_changes: number;
+  invalid_changes: number;
+  privacy_impact_counts: PrivacyImpactCounts;
 }
 
-export interface ComparisonSummary {
-  id: string;
-  companyName: string;
-  policyType: string;
-  oldVersionDate: string;
-  newVersionDate: string;
-  status: ComparisonStatus;
-  createdAt: string;
-  totalChanges: number;
-  riskScore: number;
-  privacyWorse: number;
-  privacyBetter: number;
-  noEffect: number;
-  unclear: number;
+export interface Clause {
+  clause_id: string;
+  section: string | null;
+  text: string;
+  position: number;
+  word_count: number;
 }
 
-export interface Change {
-  id: string;
-  changeType: ChangeType;
-  eventValidity: EventValidity;
-  privacyImpact: PrivacyImpact;
-  riskLevel: RiskLevel;
-  sectionOld?: string;
-  sectionNew?: string;
-  clauseOld?: string;
-  clauseNew?: string;
-  oldText?: string;
-  newText?: string;
-  explanation: string;
-  aiSummary?: string;
-  lineOld?: { start: number; end: number };
-  lineNew?: { start: number; end: number };
+export interface BeforeAlignment {
+  change_id: string;
+  change_type: ChangeType;
+  old_clause?: Clause | null;
+  new_clause?: Clause | null;
+  old_clauses?: Clause[];
+  new_clauses?: Clause[];
+  semantic_similarity?: number | null;
+  lexical_similarity?: number | null;
+  token_change_ratio?: number | null;
+  char_change_ratio?: number | null;
 }
 
-// === Dashboard Types ===
-
-export interface DashboardStats {
-  activePolicies: number;
-  expansionsDetected: number;
-  unilateralModRate: number;
-  totalComparisons: number;
-  avgRiskScore: number;
-}
-
-export interface TrendDataPoint {
-  month: string;
-  expansions: number;
-  restrictions: number;
+export interface DirectionalNLIScores {
+  entailment: number;
+  contradiction: number;
   neutral: number;
 }
 
-// === Upload Types ===
+export interface NLIResult {
+  change_id: string;
+  change_type: string;
+  old_to_new?: DirectionalNLIScores | null;
+  new_to_old?: DirectionalNLIScores | null;
+  model_name?: string;
+}
 
-export type UploadMode = 'file' | 'text' | 'url';
+export interface EvidenceItem {
+  dimension: string;
+  feature: string;
+  side: 'old' | 'new';
+  matched_text: string;
+}
 
-export interface UploadFile {
-  id: string;
-  file: File;
+export interface FeatureComparison {
+  dimension: string;
+  old_values: string[];
+  new_values: string[];
+  added: string[];
+  removed: string[];
+  status: string;
+  evidence: EvidenceItem[];
+}
+
+export interface PrivacyFeatures {
+  change_id: string;
+  comparisons: Record<string, FeatureComparison>;
+  modality?: { old: string[]; new: string[] };
+  quantifiers?: { old: string[]; new: string[] };
+}
+
+export interface SignalEvidence {
+  old: string[];
+  new: string[];
+}
+
+export interface InterpretationSignal {
+  old_value: string;
+  new_value: string;
+  direction: string;
+  evidence: SignalEvidence;
+  explanation: string;
+}
+
+export interface PrivacyInterpretation {
+  change_id: string;
+  signals: Record<string, InterpretationSignal>;
+}
+
+export interface ClassificationResult {
+  privacy_impact: PrivacyImpact;
+  confidence: number;
+  confidence_level: ConfidenceLevel | string;
+  severity: SeverityLevel | string;
+  rationale: string;
+  evidence: string[];
+  facets: string[];
+  rules_fired: string[];
+  mixed: boolean;
+  event_validity: EventValidity;
+}
+
+export interface AnalyzedChange {
+  change_id: string;
+  change_type: ChangeType;
+  event_validity: EventValidity;
+  is_valid: boolean;
+  validation_reason?: string;
+  before?: BeforeAlignment | null;
+  nli?: NLIResult | null;
+  privacy_features?: PrivacyFeatures | null;
+  privacy_interpretation?: PrivacyInterpretation | null;
+  classification?: ClassificationResult | null;
+  privacy_impact?: PrivacyImpact | null;
+}
+
+export interface CompareResponse {
+  old_policy: PolicyMetadata;
+  new_policy: PolicyMetadata;
+  summary: CompareSummary;
+  changes: AnalyzedChange[];
+}
+
+export interface HealthResponse {
+  status: string;
+  service: string;
+}
+
+// === UI State & Utility Types ===
+
+export type RiskLevel = 'critical' | 'high' | 'medium' | 'low' | 'info';
+
+export interface StagedFile {
   name: string;
-  size: number;
+  size: string;
+  sizeBytes: number;
   type: string;
-  progress: number;
-  status: 'pending' | 'uploading' | 'complete' | 'error';
-  error?: string;
-}
-
-// === Settings Types ===
-
-export interface UserSettings {
-  emailNotifications: boolean;
-  autoCompare: boolean;
-  diffAlgorithm: 'semantic' | 'structural' | 'hybrid';
-  theme: 'dark';
-  exportFormat: 'pdf' | 'json' | 'csv';
-}
-
-// === Privacy Report Types ===
-
-export interface PrivacyReport {
-  id: string;
-  comparisonId: string;
-  companyName: string;
-  generatedAt: string;
-  overallScore: number;
-  categories: PrivacyCategory[];
-  timeline: PrivacyTimelineEntry[];
-}
-
-export interface PrivacyCategory {
-  name: string;
-  score: number;
-  previousScore: number;
-  changes: number;
-  trend: 'improving' | 'declining' | 'stable';
-}
-
-export interface PrivacyTimelineEntry {
-  date: string;
-  score: number;
-  event?: string;
-}
-
-// === Document History Types ===
-
-export interface DocumentVersion {
-  id: string;
-  companyName: string;
-  policyType: string;
-  version: string;
-  capturedAt: string;
-  changeCount: number;
-  riskLevel: RiskLevel;
+  rawFile: File;
 }

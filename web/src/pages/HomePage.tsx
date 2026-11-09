@@ -1,6 +1,7 @@
 // ============================================================================
 // SneakyToS — Direct-Use Homepage & Policy Upload Interface
 // Source of Truth: Google Stitch Screen 7888dd4f46db4d638e092ee17cdd26a5
+// Fully integrated with FastAPI backend (POST /api/v1/compare)
 // ============================================================================
 
 import { useState, useRef, type DragEvent } from 'react';
@@ -18,50 +19,30 @@ import {
   Trash2,
   HelpCircle,
   X,
-  Eye,
   Brain,
-  LockKeyhole,
-  AlertTriangle,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
-
-interface StagedFile {
-  name: string;
-  size: string;
-  clauses: string;
-  date: string;
-  rawFile?: File;
-}
+import { useComparison } from '@/context/ComparisonContext';
+import { validatePolicyFile } from '@/services/comparisonService';
+import type { StagedFile } from '@/types';
 
 export function HomePage() {
   const navigate = useNavigate();
+  const { comparisonData, isLoading, error, executeCompare, setError, clearComparison } =
+    useComparison();
 
   // Baseline (OLD) Document
-  const [oldFile, setOldFile] = useState<StagedFile | null>({
-    name: 'tos_v3.2_baseline.pdf',
-    size: '1.4 MB',
-    clauses: '1,328 parsed clauses',
-    date: 'Nov 14, 2023',
-  });
+  const [oldFile, setOldFile] = useState<StagedFile | null>(null);
 
   // Revised (NEW) Document
-  const [newFile, setNewFile] = useState<StagedFile | null>({
-    name: 'tos_v4.0_2025_update.pdf',
-    size: '2.1 MB',
-    clauses: '1,412 clauses',
-    date: 'Jan 15, 2025',
-  });
+  const [newFile, setNewFile] = useState<StagedFile | null>(null);
 
-  // Metadata inputs
-  const [companyName, setCompanyName] = useState('OmniCloud Global Ltd.');
-  const [policyTitle, setPolicyTitle] = useState('Enterprise Terms of Service & Privacy Addendum');
-  const [baselineDate, setBaselineDate] = useState('Nov 14, 2023');
-  const [revisedDate, setRevisedDate] = useState('Jan 15, 2025');
-
-  // Modal and drag states
+  // UI drag & modal states
   const [showHowItWorks, setShowHowItWorks] = useState(false);
   const [isDraggingOld, setIsDraggingOld] = useState(false);
   const [isDraggingNew, setIsDraggingNew] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   const fileInputOldRef = useRef<HTMLInputElement>(null);
   const fileInputNewRef = useRef<HTMLInputElement>(null);
@@ -72,45 +53,51 @@ export function HomePage() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  const handleSelectFile = (file: File, target: 'old' | 'new') => {
+    setValidationError(null);
+    setError(null);
+
+    const validation = validatePolicyFile(file);
+    if (!validation.isValid) {
+      setValidationError(validation.error || 'Invalid file format');
+      return;
+    }
+
+    const staged: StagedFile = {
+      name: file.name,
+      size: formatFileSize(file.size),
+      sizeBytes: file.size,
+      type: file.name.endsWith('.pdf') ? 'PDF' : 'TXT',
+      rawFile: file,
+    };
+
+    if (target === 'old') setOldFile(staged);
+    else setNewFile(staged);
+  };
+
   const handleDrop = (e: DragEvent<HTMLDivElement>, target: 'old' | 'new') => {
     e.preventDefault();
     if (target === 'old') setIsDraggingOld(false);
     else setIsDraggingNew(false);
 
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
-      const staged: StagedFile = {
-        name: file.name,
-        size: formatFileSize(file.size),
-        clauses: '~1,200 parsed clauses',
-        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        rawFile: file,
-      };
-      if (target === 'old') setOldFile(staged);
-      else setNewFile(staged);
+      handleSelectFile(e.dataTransfer.files[0], target);
     }
-  };
-
-  const handleSelectFile = (file: File, target: 'old' | 'new') => {
-    const staged: StagedFile = {
-      name: file.name,
-      size: formatFileSize(file.size),
-      clauses: '~1,200 parsed clauses',
-      date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-      rawFile: file,
-    };
-    if (target === 'old') setOldFile(staged);
-    else setNewFile(staged);
   };
 
   const bothFilesReady = !!oldFile && !!newFile;
 
-  const handleAnalyze = () => {
-    if (!bothFilesReady) return;
-    setIsAnalyzing(true);
-    setTimeout(() => {
-      navigate('/analysis-progress/comp-omnicloud-v3-v4');
-    }, 400);
+  const handleAnalyze = async () => {
+    if (!oldFile || !newFile || isLoading) return;
+    setValidationError(null);
+    setError(null);
+
+    try {
+      await executeCompare(oldFile.rawFile, newFile.rawFile);
+      navigate('/workspace');
+    } catch {
+      // Error is set in context and displayed in UI
+    }
   };
 
   const scrollToWorkspace = () => {
@@ -147,12 +134,31 @@ export function HomePage() {
               >
                 How It Works
               </button>
-              <a
-                href="#about"
-                className="text-xs font-body text-on-surface-variant hover:text-on-surface transition-colors py-1"
-              >
-                About
-              </a>
+              {comparisonData && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/workspace')}
+                    className="text-xs font-body text-primary hover:text-on-surface transition-colors py-1 cursor-pointer"
+                  >
+                    Current Workspace
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/changes')}
+                    className="text-xs font-body text-on-surface-variant hover:text-on-surface transition-colors py-1 cursor-pointer"
+                  >
+                    Discrepancy Ledger
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/report')}
+                    className="text-xs font-body text-on-surface-variant hover:text-on-surface transition-colors py-1 cursor-pointer"
+                  >
+                    Impact Report
+                  </button>
+                </>
+              )}
             </nav>
           </div>
 
@@ -160,7 +166,7 @@ export function HomePage() {
           <div className="flex items-center gap-3">
             <div
               className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs text-on-surface-variant bg-surface-container border border-outline-variant/60"
-              title="Security & Cryptographic Guarantees"
+              title="Security & Ephemeral Analysis"
             >
               <Lock className="size-3 text-tertiary" />
               <span className="font-mono-code text-[11px] text-tertiary font-medium">Zero-Store</span>
@@ -175,13 +181,24 @@ export function HomePage() {
               <HelpCircle className="size-4" />
             </button>
 
-            <button
-              type="button"
-              onClick={scrollToWorkspace}
-              className="inline-flex items-center gap-1.5 bg-primary-container text-on-primary-container px-3.5 py-1.5 rounded text-xs font-medium hover:bg-primary active:scale-[0.98] transition-all glow-primary cursor-pointer"
-            >
-              <span>+ New Comparison</span>
-            </button>
+            {comparisonData ? (
+              <button
+                type="button"
+                onClick={() => navigate('/workspace')}
+                className="inline-flex items-center gap-1.5 bg-primary-container text-on-primary-container px-3.5 py-1.5 rounded text-xs font-medium hover:bg-primary active:scale-[0.98] transition-all glow-primary cursor-pointer"
+              >
+                <span>Open Workspace</span>
+                <ArrowRight className="size-3.5" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={scrollToWorkspace}
+                className="inline-flex items-center gap-1.5 bg-primary-container text-on-primary-container px-3.5 py-1.5 rounded text-xs font-medium hover:bg-primary active:scale-[0.98] transition-all glow-primary cursor-pointer"
+              >
+                <span>+ New Comparison</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -190,7 +207,40 @@ export function HomePage() {
           2. Hero Section
          ───────────────────────────────────────────────────────────── */}
       <main className="flex-grow">
-        <section className="max-w-7xl mx-auto px-6 pt-14 pb-12 text-center relative">
+        {/* Active Comparison Banner if one is already cached */}
+        {comparisonData && (
+          <div className="bg-primary/10 border-b border-primary/20 px-6 py-2.5">
+            <div className="max-w-7xl mx-auto flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2 text-primary font-mono-code">
+                <CheckCircle2 className="size-4 shrink-0" />
+                <span>
+                  Active Comparison Loaded:{' '}
+                  <strong>{comparisonData.old_policy.filename}</strong> vs{' '}
+                  <strong>{comparisonData.new_policy.filename}</strong> (
+                  {comparisonData.summary.total_changes} changes detected)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => navigate('/workspace')}
+                  className="px-2.5 py-1 rounded bg-primary text-on-primary font-semibold hover:brightness-110 cursor-pointer"
+                >
+                  View Workspace
+                </button>
+                <button
+                  type="button"
+                  onClick={() => clearComparison()}
+                  className="px-2.5 py-1 rounded bg-surface-container text-outline hover:text-on-surface cursor-pointer"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <section className="max-w-7xl mx-auto px-6 pt-12 pb-10 text-center relative">
           {/* Ephemeral Security Beacon Badge */}
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-surface-container-high border border-outline-variant mb-6 shadow-sm">
             <span className="size-2 rounded-full bg-tertiary animate-pulse" />
@@ -207,11 +257,11 @@ export function HomePage() {
 
           {/* Subtitle */}
           <p className="text-sm sm:text-base font-body text-on-surface-variant max-w-2xl mx-auto mb-8 leading-relaxed">
-            Compare old and updated privacy policies to uncover hidden changes, understand their implications, and discover how your privacy rights may be affected.
+            Compare baseline and revised privacy policies to uncover hidden clause changes, audit NLI entailment shifts, and classify privacy impact before agreeing.
           </p>
 
           {/* Action Cluster */}
-          <div className="flex flex-wrap items-center justify-center gap-4 mb-14">
+          <div className="flex flex-wrap items-center justify-center gap-4 mb-12">
             <button
               type="button"
               onClick={scrollToWorkspace}
@@ -229,89 +279,57 @@ export function HomePage() {
               <span>How It Works</span>
             </button>
           </div>
-
-          {/* Live Diff Teaser Graphic (Stitch Card Blueprint) */}
-          <div className="max-w-4xl mx-auto rounded-xl bg-surface-container-low border border-outline-variant p-4 shadow-2xl relative overflow-hidden backdrop-blur text-left">
-            <div className="flex items-center justify-between border-b border-outline-variant pb-3 mb-3">
-              <div className="flex items-center gap-2">
-                <span className="size-2.5 rounded-full bg-error" />
-                <span className="size-2.5 rounded-full bg-secondary" />
-                <span className="size-2.5 rounded-full bg-tertiary" />
-                <span className="ml-2 font-mono-code text-xs text-outline">
-                  diff_stream_preview: Clause 14.b (Data Brokers & Cross-Border AI)
-                </span>
-              </div>
-              <span className="font-mono-badge text-[10px] text-error bg-surface-container px-2 py-0.5 rounded border border-outline-variant">
-                Risk Escalation: High
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 font-mono-code text-xs">
-              {/* Left Baseline Diff Snippet */}
-              <div className="p-3.5 rounded bg-surface-container border-l-2 border-outline-variant text-on-surface-variant flex flex-col justify-between">
-                <div>
-                  <div className="text-[11px] text-outline font-semibold mb-1 flex items-center justify-between">
-                    <span>V3.2 (2023) — BASELINE</span>
-                    <span className="text-error line-through">-18 words</span>
-                  </div>
-                  <p className="font-clause-diff text-[13px] text-on-surface-variant leading-relaxed">
-                    "We do not sell, rent, or trade your personally identifiable browsing habits to third-party ad networks or unauthorized commercial data aggregators."
-                  </p>
-                </div>
-                <div className="mt-3 pt-2 border-t border-outline-variant/40 flex items-center gap-2 text-[11px] text-outline">
-                  <Lock className="size-3.5" />
-                  <span>Explicit affirmative consent clause</span>
-                </div>
-              </div>
-
-              {/* Right Revised Diff Snippet */}
-              <div className="p-3.5 rounded bg-surface-container border-l-2 border-primary text-on-surface flex flex-col justify-between">
-                <div>
-                  <div className="text-[11px] text-primary font-semibold mb-1 flex items-center justify-between">
-                    <span>V4.0 (2025) — CURRENT REVISION</span>
-                    <span className="text-tertiary">+34 words (expanded scope)</span>
-                  </div>
-                  <p className="font-clause-diff text-[13px] text-on-surface leading-relaxed">
-                    "We may share pseudonymized telemetry, behavioral prompts, and interaction logs with{' '}
-                    <span className="bg-primary/20 text-primary-fixed font-medium px-1 rounded">
-                      qualified AI model development partners
-                    </span>{' '}
-                    and affiliates for algorithmic refinement."
-                  </p>
-                </div>
-                <div className="mt-3 pt-2 border-t border-outline-variant/40 flex items-center gap-2 text-[11px] text-error">
-                  <AlertTriangle className="size-3.5 text-error" />
-                  <span>Implicit biometric & interaction training grant</span>
-                </div>
-              </div>
-            </div>
-          </div>
         </section>
 
         {/* ─────────────────────────────────────────────────────────────
             3. Dual-Zone Document Upload Workspace (Centerpiece)
            ───────────────────────────────────────────────────────────── */}
-        <section className="max-w-7xl mx-auto px-6 py-10" id="workspace">
+        <section className="max-w-7xl mx-auto px-6 py-8" id="workspace">
           <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-3 border-b border-outline-variant pb-4">
             <div>
               <h2 className="text-2xl font-display font-semibold text-on-surface tracking-tight">
                 Select Two Policy Versions
               </h2>
               <p className="text-sm font-body text-on-surface-variant mt-1">
-                Upload or paste previous and revised documents to run deep semantic clause alignment.
+                Upload original and revised policy documents (.txt or .pdf, max 20 MB each) for deep neural clause alignment.
               </p>
             </div>
             <div className="flex items-center gap-2 font-mono-badge text-xs text-outline">
               <ShieldCheck className="size-4 text-tertiary" />
-              <span>In-Memory RAM Sandbox Active</span>
+              <span>FastAPI Backend Connected</span>
             </div>
           </div>
+
+          {/* Error Banner */}
+          {(validationError || error) && (
+            <div className="mb-6 p-4 rounded-xl bg-red-950/30 border border-red-500/50 text-red-200 flex items-start justify-between gap-3 shadow-lg">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="size-5 text-red-400 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="text-sm font-semibold text-red-300">Comparison Failed</h4>
+                  <p className="text-xs text-red-200/90 mt-0.5 leading-relaxed">
+                    {validationError || error}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setValidationError(null);
+                  setError(null);
+                }}
+                className="text-red-400 hover:text-red-200 p-1"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+          )}
 
           {/* Hidden file inputs */}
           <input
             ref={fileInputOldRef}
             type="file"
-            accept=".pdf,.docx,.txt"
+            accept=".pdf,.txt"
             className="hidden"
             onChange={(e) => {
               if (e.target.files && e.target.files[0]) {
@@ -322,7 +340,7 @@ export function HomePage() {
           <input
             ref={fileInputNewRef}
             type="file"
-            accept=".pdf,.docx,.txt"
+            accept=".pdf,.txt"
             className="hidden"
             onChange={(e) => {
               if (e.target.files && e.target.files[0]) {
@@ -334,7 +352,7 @@ export function HomePage() {
           {/* Side-by-Side Interactive Upload Cards with Central Connector */}
           <div className="relative grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] gap-6 items-center">
             {/* ── LEFT CARD: OLD POLICY (Baseline Document) ── */}
-            <div className="bg-surface-container rounded-xl border border-outline-variant p-6 relative flex flex-col justify-between shadow-lg hover:border-primary/50 transition-all">
+            <div className="bg-surface-container rounded-xl border border-outline-variant p-6 relative flex flex-col justify-between shadow-lg hover:border-primary/50 transition-all min-h-[260px]">
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <span className="font-mono-badge text-[10.5px] text-outline uppercase tracking-wider block">
@@ -346,7 +364,7 @@ export function HomePage() {
                   <p className="text-xs text-on-surface-variant">Original Version (Baseline)</p>
                 </div>
                 <span className="px-2.5 py-1 rounded bg-surface-container-high border border-outline-variant font-mono-code text-xs text-on-surface-variant">
-                  v_base
+                  old_policy
                 </span>
               </div>
 
@@ -354,24 +372,22 @@ export function HomePage() {
               {oldFile ? (
                 <div className="rounded-lg bg-surface-container-lowest border border-outline-variant p-4 mb-4">
                   <div className="flex items-start gap-3">
-                    <div className="size-10 rounded bg-error-container/20 border border-error-container/40 flex items-center justify-center text-error shrink-0">
+                    <div className="size-10 rounded bg-red-500/10 border border-red-500/30 flex items-center justify-center text-red-400 shrink-0">
                       <FileText className="size-5" />
                     </div>
                     <div className="flex-grow min-w-0">
                       <div className="flex items-center justify-between">
-                        <span className="font-mono-code text-xs text-on-surface font-medium truncate">
+                        <span className="font-mono-code text-xs text-on-surface font-medium truncate" title={oldFile.name}>
                           {oldFile.name}
                         </span>
-                        <span className="font-mono-badge text-[10px] text-tertiary bg-tertiary/10 px-1.5 py-0.5 rounded">
-                          Parsed OK
+                        <span className="font-mono-badge text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                          {oldFile.type} Ready
                         </span>
                       </div>
                       <div className="flex items-center gap-3 text-xs text-outline mt-1 font-mono-code text-[11px]">
                         <span>{oldFile.size}</span>
                         <span>•</span>
-                        <span>{oldFile.clauses}</span>
-                        <span>•</span>
-                        <span>{oldFile.date}</span>
+                        <span>Baseline Reference</span>
                       </div>
                     </div>
                   </div>
@@ -379,16 +395,18 @@ export function HomePage() {
                   <div className="flex items-center justify-end gap-2 mt-4 pt-3 border-t border-outline-variant">
                     <button
                       type="button"
+                      disabled={isLoading}
                       onClick={() => fileInputOldRef.current?.click()}
-                      className="px-2.5 py-1 rounded text-xs text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors flex items-center gap-1 cursor-pointer"
+                      className="px-2.5 py-1 rounded text-xs text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
                     >
                       <RefreshCw className="size-3" />
                       <span>Replace</span>
                     </button>
                     <button
                       type="button"
+                      disabled={isLoading}
                       onClick={() => setOldFile(null)}
-                      className="px-2.5 py-1 rounded text-xs text-error hover:bg-error-container/20 transition-colors flex items-center gap-1 cursor-pointer"
+                      className="px-2.5 py-1 rounded text-xs text-red-400 hover:bg-red-500/10 transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
                     >
                       <Trash2 className="size-3" />
                       <span>Remove</span>
@@ -404,7 +422,7 @@ export function HomePage() {
                   onDragLeave={() => setIsDraggingOld(false)}
                   onDrop={(e) => handleDrop(e, 'old')}
                   onClick={() => fileInputOldRef.current?.click()}
-                  className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors cursor-pointer flex flex-col items-center justify-center mb-4 ${
+                  className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors cursor-pointer flex flex-col items-center justify-center mb-4 flex-1 ${
                     isDraggingOld
                       ? 'border-primary bg-primary/10'
                       : 'border-outline-variant hover:bg-surface-container-high'
@@ -412,23 +430,23 @@ export function HomePage() {
                 >
                   <UploadCloud className="size-8 text-outline mb-2" />
                   <span className="text-sm text-on-surface font-medium">
-                    Drag & drop PDF, DOCX, or TXT
+                    Drag & drop baseline policy
                   </span>
                   <span className="text-xs text-outline mt-1">
-                    or click to Browse Files (Max 50MB)
+                    Accepts .txt or .pdf (Max 20 MB)
                   </span>
                 </div>
               )}
 
               <div className="text-[11px] font-mono-code text-outline text-right">
-                OCR Searchable Supported
+                Supported: TXT, Searchable PDF
               </div>
             </div>
 
             {/* ── CENTER GLYPH: Bi-directional Purple Diff Connector ── */}
             <div className="flex lg:flex-col items-center justify-center my-2 lg:my-0 z-10">
               <div className="size-12 rounded-full bg-surface-container-high border-2 border-primary-container flex items-center justify-center text-primary glow-primary shadow-xl">
-                <RefreshCw className="size-5" />
+                <RefreshCw className={`size-5 ${isLoading ? 'animate-spin' : ''}`} />
               </div>
               <span className="hidden lg:block font-mono-badge text-[11px] text-outline mt-2 tracking-widest uppercase">
                 VS
@@ -436,7 +454,7 @@ export function HomePage() {
             </div>
 
             {/* ── RIGHT CARD: NEW POLICY (Revision Document) ── */}
-            <div className="bg-surface-container rounded-xl border border-outline-variant p-6 relative flex flex-col justify-between shadow-lg hover:border-primary/50 transition-all">
+            <div className="bg-surface-container rounded-xl border border-outline-variant p-6 relative flex flex-col justify-between shadow-lg hover:border-primary/50 transition-all min-h-[260px]">
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <span className="font-mono-badge text-[10.5px] text-primary uppercase tracking-wider block">
@@ -448,7 +466,7 @@ export function HomePage() {
                   <p className="text-xs text-on-surface-variant">Updated Version (Revision)</p>
                 </div>
                 <span className="px-2.5 py-1 rounded bg-surface-container-high border border-outline-variant font-mono-code text-xs text-primary">
-                  v_revised
+                  new_policy
                 </span>
               </div>
 
@@ -456,24 +474,22 @@ export function HomePage() {
               {newFile ? (
                 <div className="rounded-lg bg-surface-container-lowest border border-outline-variant p-4 mb-4">
                   <div className="flex items-start gap-3">
-                    <div className="size-10 rounded bg-primary-container/20 border border-primary-container/40 flex items-center justify-center text-primary shrink-0">
+                    <div className="size-10 rounded bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
                       <FileText className="size-5" />
                     </div>
                     <div className="flex-grow min-w-0">
                       <div className="flex items-center justify-between">
-                        <span className="font-mono-code text-xs text-on-surface font-medium truncate">
+                        <span className="font-mono-code text-xs text-on-surface font-medium truncate" title={newFile.name}>
                           {newFile.name}
                         </span>
-                        <span className="font-mono-badge text-[10px] text-secondary bg-secondary-container/30 px-1.5 py-0.5 rounded">
-                          Indexed Ready
+                        <span className="font-mono-badge text-[10px] text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/30">
+                          {newFile.type} Ready
                         </span>
                       </div>
                       <div className="flex items-center gap-3 text-xs text-outline mt-1 font-mono-code text-[11px]">
                         <span>{newFile.size}</span>
                         <span>•</span>
-                        <span>{newFile.clauses}</span>
-                        <span>•</span>
-                        <span>{newFile.date}</span>
+                        <span>Revised Target</span>
                       </div>
                     </div>
                   </div>
@@ -481,16 +497,18 @@ export function HomePage() {
                   <div className="flex items-center justify-end gap-2 mt-4 pt-3 border-t border-outline-variant">
                     <button
                       type="button"
+                      disabled={isLoading}
                       onClick={() => fileInputNewRef.current?.click()}
-                      className="px-2.5 py-1 rounded text-xs text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors flex items-center gap-1 cursor-pointer"
+                      className="px-2.5 py-1 rounded text-xs text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
                     >
                       <RefreshCw className="size-3" />
                       <span>Replace</span>
                     </button>
                     <button
                       type="button"
+                      disabled={isLoading}
                       onClick={() => setNewFile(null)}
-                      className="px-2.5 py-1 rounded text-xs text-error hover:bg-error-container/20 transition-colors flex items-center gap-1 cursor-pointer"
+                      className="px-2.5 py-1 rounded text-xs text-red-400 hover:bg-red-500/10 transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
                     >
                       <Trash2 className="size-3" />
                       <span>Remove</span>
@@ -506,7 +524,7 @@ export function HomePage() {
                   onDragLeave={() => setIsDraggingNew(false)}
                   onDrop={(e) => handleDrop(e, 'new')}
                   onClick={() => fileInputNewRef.current?.click()}
-                  className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors cursor-pointer flex flex-col items-center justify-center mb-4 ${
+                  className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors cursor-pointer flex flex-col items-center justify-center mb-4 flex-1 ${
                     isDraggingNew
                       ? 'border-primary bg-primary/10'
                       : 'border-outline-variant hover:bg-surface-container-high'
@@ -514,186 +532,120 @@ export function HomePage() {
                 >
                   <UploadCloud className="size-8 text-primary mb-2" />
                   <span className="text-sm text-on-surface font-medium">
-                    Drag & drop updated policy
+                    Drag & drop revised policy
                   </span>
                   <span className="text-xs text-outline mt-1">
-                    or click to Browse Files (Max 50MB)
+                    Accepts .txt or .pdf (Max 20 MB)
                   </span>
                 </div>
               )}
 
               <div className="text-[11px] font-mono-code text-outline text-right">
-                Instant Optical Layout Matching
+                Supported: TXT, Searchable PDF
               </div>
             </div>
           </div>
 
-          {/* Additional Optional Metadata Inputs */}
-          <div className="mt-6 bg-surface-container rounded-xl border border-outline-variant p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <span className="text-primary text-sm font-semibold">Comparison Metadata</span>
-                <span className="text-xs text-outline">(Optional)</span>
-              </div>
-              <span className="font-mono-badge text-[10.5px] text-outline">
-                Assists in legal audit categorization
-              </span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div>
-                <label className="block text-xs font-body text-outline mb-1.5">
-                  Company / Organization
-                </label>
-                <input
-                  type="text"
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg px-3 py-2 text-xs text-on-surface focus:border-primary focus:outline-none transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-body text-outline mb-1.5">Policy Title</label>
-                <input
-                  type="text"
-                  value={policyTitle}
-                  onChange={(e) => setPolicyTitle(e.target.value)}
-                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg px-3 py-2 text-xs text-on-surface focus:border-primary focus:outline-none transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-body text-outline mb-1.5">Baseline Date</label>
-                <input
-                  type="text"
-                  value={baselineDate}
-                  onChange={(e) => setBaselineDate(e.target.value)}
-                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg px-3 py-2 text-xs text-on-surface focus:border-primary focus:outline-none transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-body text-outline mb-1.5">Revised Date</label>
-                <input
-                  type="text"
-                  value={revisedDate}
-                  onChange={(e) => setRevisedDate(e.target.value)}
-                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg px-3 py-2 text-xs text-on-surface focus:border-primary focus:outline-none transition-all"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Primary Action Trigger & Security Badging */}
+          {/* Primary Action Trigger */}
           <div className="mt-8 text-center flex flex-col items-center">
             <button
               type="button"
-              disabled={!bothFilesReady || isAnalyzing}
+              disabled={!bothFilesReady || isLoading}
               onClick={handleAnalyze}
               className={`w-full sm:w-auto min-w-[320px] inline-flex items-center justify-center gap-3 px-8 py-4 rounded-xl text-base font-display font-semibold transition-all shadow-xl ${
-                bothFilesReady && !isAnalyzing
+                bothFilesReady && !isLoading
                   ? 'bg-gradient-to-r from-primary-container via-primary to-inverse-primary text-on-primary-container hover:brightness-110 active:scale-[0.98] glow-primary cursor-pointer'
-                  : 'bg-surface-container-high text-outline cursor-not-allowed opacity-50'
+                  : 'bg-surface-container-high text-outline cursor-not-allowed opacity-60'
               }`}
             >
-              {isAnalyzing ? (
+              {isLoading ? (
                 <>
-                  <RefreshCw className="size-5 animate-spin" />
-                  <span>Aligning 2,740 Clauses...</span>
+                  <RefreshCw className="size-5 animate-spin text-primary" />
+                  <span>Running Forensic Pipeline & NLI Inference...</span>
                 </>
               ) : (
                 <>
-                  <span>Analyze Policy Changes</span>
+                  <span>Run Deep Forensic Comparison</span>
                   <ArrowRight className="size-5" />
                 </>
               )}
             </button>
 
-            {!bothFilesReady && (
-              <p className="mt-2 text-xs text-error font-mono-badge">
-                * Please select or upload both baseline and revised policy files to proceed
-              </p>
+            {isLoading && (
+              <div className="mt-4 max-w-md mx-auto text-xs text-on-surface-variant bg-surface-container p-3 rounded-lg border border-outline-variant text-center space-y-1">
+                <p className="font-semibold text-primary">Inference In Progress</p>
+                <p className="text-outline">
+                  Parsing clauses, computing semantic vector alignments, auditing event validity, and classifying privacy impact. This may take 15–60 seconds depending on policy length.
+                </p>
+              </div>
             )}
 
-            <p className="mt-4 text-xs font-body text-outline flex items-center justify-center gap-2">
-              <Lock className="size-3.5 text-tertiary" />
-              <span>
-                Supported: PDF (searchable & OCR), DOCX, TXT · Up to 50MB per file · Documents wiped immediately upon session close
-              </span>
-            </p>
-          </div>
-
-          {/* 6-Stage Pipeline Roadmap Preview Card */}
-          <div className="mt-12 bg-surface-container-low rounded-xl border border-outline-variant p-6 shadow-inner">
-            <div className="flex items-center justify-between mb-4">
-              <h4 className="text-xs font-mono-badge text-on-surface-variant font-semibold uppercase tracking-wider">
-                How the SneakyToS Engine Operates
-              </h4>
-              <span className="font-mono-badge text-[11px] text-primary">
-                6-Stage Ephemeral Pipeline
-              </span>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-              {[
-                { stage: '01', title: 'Text Ingestion', sub: 'Strip header junk', color: 'text-primary' },
-                { stage: '02', title: 'Clause Segmentation', sub: 'AST breakdown', color: 'text-primary' },
-                { stage: '03', title: 'Semantic Alignment', sub: 'Cosine matching', color: 'text-primary' },
-                { stage: '04', title: 'Event Detection', sub: 'Add / Sub / Mod', color: 'text-tertiary' },
-                { stage: '05', title: 'Privacy Impact NLI', sub: 'Rights reduction', color: 'text-tertiary' },
-                { stage: '06', title: 'Evidence Report', sub: 'Interactive diff', color: 'text-primary' },
-              ].map((step, idx) => (
-                <div
-                  key={idx}
-                  className="bg-surface-container rounded-lg p-3 border border-outline-variant flex flex-col justify-between"
-                >
-                  <span className={`font-mono-badge text-[10px] font-semibold ${step.color}`}>
-                    {step.stage} / STAGE
-                  </span>
-                  <div className="mt-2 text-xs font-body font-medium text-on-surface">
-                    {step.title}
-                  </div>
-                  <div className="text-[11px] text-outline mt-1 font-mono-code">{step.sub}</div>
-                </div>
-              ))}
-            </div>
+            {!isLoading && (
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-6 text-xs text-outline font-mono-code">
+                <span className="flex items-center gap-1.5">
+                  <CheckCircle2 className="size-3.5 text-tertiary" />
+                  Bi-Encoder Clause Alignment
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <CheckCircle2 className="size-3.5 text-tertiary" />
+                  DeBERTa-v3 NLI Verification
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <CheckCircle2 className="size-3.5 text-tertiary" />
+                  Event Validity & Quality Audit
+                </span>
+              </div>
+            )}
           </div>
         </section>
 
         {/* ─────────────────────────────────────────────────────────────
-            4. Explainer Grid Section
+            4. Architecture & Safeguards Cards
            ───────────────────────────────────────────────────────────── */}
-        <section className="max-w-7xl mx-auto px-6 py-12 border-t border-outline-variant" id="about">
+        <section className="max-w-7xl mx-auto px-6 py-12 border-t border-outline-variant mt-8">
+          <div className="text-center max-w-2xl mx-auto mb-10">
+            <h3 className="text-xl font-display font-semibold text-on-surface">
+              Built on 3 Strict Independent Dimensions
+            </h3>
+            <p className="text-xs text-on-surface-variant mt-1.5">
+              SneakyToS never conflates structural diffs with legal validity or privacy impact.
+            </p>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-surface-container p-6 rounded-xl border border-outline-variant">
-              <div className="size-10 rounded bg-primary/10 border border-primary/20 flex items-center justify-center text-primary mb-4">
-                <Eye className="size-5" />
-              </div>
-              <h3 className="text-base font-display text-on-surface font-semibold mb-2">
-                Unbiased Legal Diffing
-              </h3>
-              <p className="text-xs font-body text-on-surface-variant leading-relaxed">
-                Standard word diffs produce unreadable clutter when paragraphs are reorganized. Our syntactic parser isolates legal predicates, identifying scope expansion and arbitration waivers independently of formatting changes.
+            <div className="p-5 rounded-xl bg-surface-container border border-outline-variant">
+              <span className="font-mono-badge text-[10px] text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/30 uppercase">
+                Dimension 1
+              </span>
+              <h4 className="text-base font-display font-semibold text-on-surface mt-3">
+                Change Type
+              </h4>
+              <p className="text-xs text-on-surface-variant mt-1 leading-relaxed">
+                Structural difference identification: <code>ADDED</code>, <code>MODIFIED</code>, <code>DELETED</code>, or <code>RESTRUCTURED</code>.
               </p>
             </div>
 
-            <div className="bg-surface-container p-6 rounded-xl border border-outline-variant">
-              <div className="size-10 rounded bg-tertiary/10 border border-tertiary/20 flex items-center justify-center text-tertiary mb-4">
-                <Brain className="size-5" />
-              </div>
-              <h3 className="text-base font-display text-on-surface font-semibold mb-2">
-                Natural Language Inference
-              </h3>
-              <p className="text-xs font-body text-on-surface-variant leading-relaxed">
-                We evaluate changes against rigorous privacy-preserving benchmarks: GDPR, CCPA, and CPRA rights. Changes are categorized by risk level: Privacy Gain, Ambiguous Wording, or Escalated Risk.
+            <div className="p-5 rounded-xl bg-surface-container border border-outline-variant">
+              <span className="font-mono-badge text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30 uppercase">
+                Dimension 2
+              </span>
+              <h4 className="text-base font-display font-semibold text-on-surface mt-3">
+                Event Validity
+              </h4>
+              <p className="text-xs text-on-surface-variant mt-1 leading-relaxed">
+                Verifies genuine policy changes versus OCR artifacts, heading splits, fragments, or mismatched alignment noise.
               </p>
             </div>
 
-            <div className="bg-surface-container p-6 rounded-xl border border-outline-variant">
-              <div className="size-10 rounded bg-secondary/10 border border-secondary/20 flex items-center justify-center text-secondary mb-4">
-                <LockKeyhole className="size-5" />
-              </div>
-              <h3 className="text-base font-display text-on-surface font-semibold mb-2">
-                Cryptographic Ephemerality
-              </h3>
-              <p className="text-xs font-body text-on-surface-variant leading-relaxed">
-                Your uploaded drafts and corporate agreements are kept entirely in encrypted volatile memory. No user account is needed, no cookies track your queries, and documents are securely discarded the instant your diff executes.
+            <div className="p-5 rounded-xl bg-surface-container border border-outline-variant">
+              <span className="font-mono-badge text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30 uppercase">
+                Dimension 3
+              </span>
+              <h4 className="text-base font-display font-semibold text-on-surface mt-3">
+                Privacy Impact
+              </h4>
+              <p className="text-xs text-on-surface-variant mt-1 leading-relaxed">
+                Classifies legal rights consequence: <code>PRIVACY_WORSE</code>, <code>PRIVACY_BETTER</code>, <code>NO_PRIVACY_EFFECT</code>, or <code>UNCLEAR</code>.
               </p>
             </div>
           </div>
@@ -701,85 +653,87 @@ export function HomePage() {
       </main>
 
       {/* ─────────────────────────────────────────────────────────────
-          5. "How It Works" Interactive Modal
+          5. Minimalist Footer
+         ───────────────────────────────────────────────────────────── */}
+      <footer className="w-full bg-surface-container-lowest border-t border-outline-variant py-6">
+        <div className="max-w-7xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-outline">
+          <div className="flex items-center gap-2">
+            <Shield className="size-4 text-primary" />
+            <span className="font-semibold text-on-surface">SneakyToS</span>
+            <span>— Advanced Privacy Policy Difference & Impact Intelligence</span>
+          </div>
+          <div className="font-mono-code text-[11px]">
+            FastAPI Pipeline v1.0 · DeBERTa-v3 NLI
+          </div>
+        </div>
+      </footer>
+
+      {/* ─────────────────────────────────────────────────────────────
+          6. How It Works Modal
          ───────────────────────────────────────────────────────────── */}
       {showHowItWorks && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-surface-container-lowest/80 backdrop-blur-md">
-          <div className="bg-surface-container border border-outline-variant rounded-xl max-w-xl w-full p-6 shadow-2xl relative">
-            <div className="flex items-center justify-between pb-3 border-b border-outline-variant mb-4">
-              <div className="flex items-center gap-2">
-                <Shield className="size-5 text-primary" />
-                <h3 className="text-base font-display text-on-surface font-semibold">
-                  How SneakyToS Parses Clauses
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-surface-container border border-outline-variant rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-outline-variant pb-3">
+              <div className="flex items-center gap-2.5">
+                <Brain className="size-5 text-primary" />
+                <h3 className="text-lg font-display font-semibold text-on-surface">
+                  How SneakyToS Works
                 </h3>
               </div>
               <button
                 type="button"
                 onClick={() => setShowHowItWorks(false)}
-                className="p-1 rounded text-outline hover:text-on-surface hover:bg-surface-container-high transition-colors cursor-pointer"
+                className="p-1 rounded-lg text-outline hover:text-on-surface hover:bg-surface-container-high transition-colors"
               >
-                <X className="size-4" />
+                <X className="size-5" />
               </button>
             </div>
-            <div className="space-y-3 text-xs font-body text-on-surface-variant leading-relaxed">
-              <p>
-                1. <strong className="text-on-surface">Dual Document Normalization:</strong> PDFs, DOCX, and raw text are parsed using layout-aware OCR. Footers, page numbers, and redundant TOCs are stripped.
-              </p>
-              <p>
-                2. <strong className="text-on-surface">Semantic Chunking:</strong> Rather than line-by-line diffing, terms are split into discrete legal obligations and data-handling promises.
-              </p>
-              <p>
-                3. <strong className="text-on-surface">Risk Triaging:</strong> Our fine-tuned legal NLI classifier highlights newly claimed rights (e.g., training AI models, cross-border data transfer, unilateral updates) in red, and removals in green.
-              </p>
+
+            <div className="space-y-4 text-xs font-body text-on-surface-variant leading-relaxed">
+              <div className="p-3.5 rounded-lg bg-surface-container-lowest border border-outline-variant">
+                <h4 className="font-semibold text-on-surface mb-1 flex items-center gap-2">
+                  <span className="size-5 rounded-full bg-primary/20 text-primary flex items-center justify-center text-[10px] font-mono">1</span>
+                  Clause Segmentation & Clean Ingestion
+                </h4>
+                <p>
+                  Documents are extracted from text or PDF format, stripped of layout headers and pagination artifacts, and parsed into legal clauses.
+                </p>
+              </div>
+
+              <div className="p-3.5 rounded-lg bg-surface-container-lowest border border-outline-variant">
+                <h4 className="font-semibold text-on-surface mb-1 flex items-center gap-2">
+                  <span className="size-5 rounded-full bg-primary/20 text-primary flex items-center justify-center text-[10px] font-mono">2</span>
+                  Semantic Embedding Alignment
+                </h4>
+                <p>
+                  A bi-encoder sentence-transformer calculates dense cosine similarities across clauses to find true counterparts, handling reordered and split sections.
+                </p>
+              </div>
+
+              <div className="p-3.5 rounded-lg bg-surface-container-lowest border border-outline-variant">
+                <h4 className="font-semibold text-on-surface mb-1 flex items-center gap-2">
+                  <span className="size-5 rounded-full bg-primary/20 text-primary flex items-center justify-center text-[10px] font-mono">3</span>
+                  Event Validity & NLI Impact Classification
+                </h4>
+                <p>
+                  Cross-encoder Natural Language Inference (DeBERTa-v3) computes bidirectional entailment and contradiction scores to determine if user rights have degraded or expanded.
+                </p>
+              </div>
             </div>
-            <div className="mt-6 pt-4 border-t border-outline-variant flex justify-end">
+
+            <div className="pt-2 flex justify-end">
               <button
                 type="button"
                 onClick={() => setShowHowItWorks(false)}
-                className="bg-primary-container text-on-primary-container px-4 py-2 rounded text-xs font-medium hover:bg-primary transition-colors cursor-pointer"
+                className="px-4 py-2 rounded-lg bg-primary-container text-on-primary-container font-semibold hover:bg-primary transition-colors cursor-pointer"
               >
-                Got It, Back to Workspace
+                Got It
               </button>
             </div>
           </div>
         </div>
       )}
-
-      {/* ─────────────────────────────────────────────────────────────
-          6. Footer
-         ───────────────────────────────────────────────────────────── */}
-      <footer className="w-full bg-surface-container-lowest border-t border-outline-variant">
-        <div className="w-full py-6 px-6 max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4 text-xs font-body">
-          <div className="text-center md:text-left">
-            <div className="text-on-surface-variant flex items-center justify-center md:justify-start gap-2 mb-1">
-              <Shield className="size-4 text-primary" />
-              <span className="font-semibold text-on-surface">SneakyToS</span>
-              <span className="text-outline">· Tactical Policy Intelligence</span>
-            </div>
-            <p className="text-outline text-[11px] max-w-xl">
-              © SneakyToS. Automated privacy-policy analysis for informational purposes only. Not legal advice. Zero data retention guaranteed.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center justify-center gap-4 text-outline text-xs">
-            <button
-              type="button"
-              onClick={() => setShowHowItWorks(true)}
-              className="hover:text-primary transition-colors cursor-pointer"
-            >
-              Zero-Retention Policy
-            </button>
-            <a href="#about" className="hover:text-primary transition-colors">
-              Open Diff Specs
-            </a>
-            <a href="#about" className="hover:text-primary transition-colors">
-              Documentation
-            </a>
-            <a href="#about" className="hover:text-primary transition-colors">
-              Terms
-            </a>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }

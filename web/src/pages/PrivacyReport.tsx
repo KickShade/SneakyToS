@@ -1,20 +1,22 @@
 // ============================================================================
 // SneakyToS — Forensic Privacy Impact Audit Report
-// Aligned with Google Stitch Design & Analysis Architecture
+// Aligned with Google Stitch Design & Real Backend Analysis Pipeline
 // ============================================================================
 
-import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
-  Download,
   Share2,
-  FileText,
   TrendingDown,
+  TrendingUp,
   ShieldAlert,
-  ArrowLeft,
-  Sparkles,
   Shield,
-  PlusCircle,
+  Printer,
+  FileDown,
+  UploadCloud,
+  CheckCircle2,
+  Brain,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   BarChart,
@@ -23,27 +25,86 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  LineChart,
-  Line,
+  Legend,
 } from 'recharts';
-import { Badge } from '@/components/common/Badge';
-import { mockPrivacyReport, mockDetailedComparison } from '@/services/mockData';
+import { useComparison } from '@/context/ComparisonContext';
+import {
+  ChangeTypeBadge,
+  PrivacyImpactBadge,
+} from '@/components/common/Badge';
+import {
+  createDocumentSectionContext,
+  resolveChangeCardHeading,
+} from '@/utils/sectionUtils';
 
 export function PrivacyReport() {
   const navigate = useNavigate();
-  const { id } = useParams<{ id?: string }>();
-
-  const report = mockPrivacyReport;
-  const comparison = mockDetailedComparison;
+  const { comparisonData } = useComparison();
   const [copied, setCopied] = useState(false);
 
-  // Prepare chart data comparing previous vs current category scores
-  const chartData = report.categories.map((cat) => ({
-    name: cat.name.split(' ')[0], // short name
-    fullName: cat.name,
-    Previous: cat.previousScore,
-    Current: cat.score,
-  }));
+  const changes = useMemo(() => comparisonData?.changes || [], [comparisonData]);
+
+  // Document-level section resolution context for Baseline and Revised policies
+  const oldSectionContext = useMemo(
+    () => createDocumentSectionContext(changes, 'old'),
+    [changes]
+  );
+  const newSectionContext = useMemo(
+    () => createDocumentSectionContext(changes, 'new'),
+    [changes]
+  );
+
+  // Aggregate facet impact distribution from real data
+  const facetChartData = useMemo(() => {
+    if (!comparisonData) return [];
+
+    const facetMap: Record<
+      string,
+      { name: string; Worse: number; Better: number; Unclear: number; Neutral: number }
+    > = {};
+
+    changes.forEach((c) => {
+      // Gather facets from classification or privacy features
+      const facets: string[] = [];
+      if (c.classification?.facets && c.classification.facets.length > 0) {
+        facets.push(...c.classification.facets);
+      } else if (c.privacy_features?.comparisons) {
+        facets.push(...Object.keys(c.privacy_features.comparisons));
+      } else {
+        facets.push('general');
+      }
+
+      facets.forEach((f) => {
+        const key = f.toLowerCase();
+        if (!facetMap[key]) {
+          facetMap[key] = {
+            name: key.charAt(0).toUpperCase() + key.slice(1),
+            Worse: 0,
+            Better: 0,
+            Unclear: 0,
+            Neutral: 0,
+          };
+        }
+
+        if (c.privacy_impact === 'PRIVACY_WORSE') facetMap[key].Worse += 1;
+        else if (c.privacy_impact === 'PRIVACY_BETTER') facetMap[key].Better += 1;
+        else if (c.privacy_impact === 'UNCLEAR') facetMap[key].Unclear += 1;
+        else facetMap[key].Neutral += 1;
+      });
+    });
+
+    return Object.values(facetMap);
+  }, [comparisonData, changes]);
+
+  // Adverse changes (Privacy Worse)
+  const adverseChanges = useMemo(() => {
+    return changes.filter((c) => c.privacy_impact === 'PRIVACY_WORSE');
+  }, [changes]);
+
+  // Protective changes (Privacy Better)
+  const protectiveChanges = useMemo(() => {
+    return changes.filter((c) => c.privacy_impact === 'PRIVACY_BETTER');
+  }, [changes]);
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(window.location.href);
@@ -51,20 +112,78 @@ export function PrivacyReport() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handlePrint = () => {
+    window.print();
+  };
+
   const handleExportJson = () => {
+    if (!comparisonData) return;
     const dataStr =
       'data:text/json;charset=utf-8,' +
-      encodeURIComponent(JSON.stringify({ report, comparison }, null, 2));
+      encodeURIComponent(JSON.stringify(comparisonData, null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute('href', dataStr);
     downloadAnchor.setAttribute(
       'download',
-      `sneakytos-audit-${report.companyName.toLowerCase().replace(/\s+/g, '-')}.json`
+      `sneakytos-audit-report-${comparisonData.old_policy.filename}-vs-${comparisonData.new_policy.filename}.json`
     );
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
   };
+
+  // If no comparison is loaded, show empty state
+  if (!comparisonData) {
+    return (
+      <div className="min-h-screen bg-background text-on-surface antialiased flex flex-col justify-between selection:bg-primary-container selection:text-on-primary-container">
+        <header className="h-14 w-full z-20 bg-surface-container-lowest border-b border-outline-variant px-5 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-on-surface font-semibold text-sm">
+            <Shield className="size-4 text-primary" />
+            <span>SneakyToS Forensic Audit Report</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/')}
+            className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-semibold hover:brightness-110 cursor-pointer"
+          >
+            + Upload Policies
+          </button>
+        </header>
+
+        <div className="max-w-xl mx-auto my-auto p-8 rounded-2xl bg-surface-container border border-outline-variant text-center space-y-4 shadow-xl">
+          <div className="size-16 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center text-primary mx-auto">
+            <UploadCloud className="size-8" />
+          </div>
+          <h2 className="text-xl font-display font-semibold text-on-surface">
+            No Comparison Loaded
+          </h2>
+          <p className="text-xs text-on-surface-variant max-w-md mx-auto leading-relaxed">
+            Upload baseline and revised policies on the homepage to generate a comprehensive forensic privacy impact audit report.
+          </p>
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-primary text-on-primary text-sm font-semibold hover:brightness-110 active:scale-[0.98] transition-all cursor-pointer shadow-lg"
+            >
+              <span>Go to Document Upload</span>
+              <Shield className="size-4" />
+            </button>
+          </div>
+        </div>
+
+        <footer className="w-full bg-surface-container-lowest border-t border-outline-variant py-4 text-center text-xs text-outline">
+          SneakyToS · Privacy Policy Forensic Audit Engine
+        </footer>
+      </div>
+    );
+  }
+
+  const { old_policy, new_policy, summary } = comparisonData;
+  const counts = summary.privacy_impact_counts;
+
+  const isNetWorse = counts.PRIVACY_WORSE > counts.PRIVACY_BETTER;
+  const isNetBetter = counts.PRIVACY_BETTER > counts.PRIVACY_WORSE;
 
   return (
     <div className="min-h-screen bg-background text-on-surface antialiased flex flex-col selection:bg-primary-container selection:text-on-primary-container print:bg-white print:text-black">
@@ -84,9 +203,15 @@ export function PrivacyReport() {
               <span>Audits</span>
             </button>
             <span className="text-outline-variant/80">/</span>
-            <span className="hover:text-on-surface transition-colors">{report.companyName}</span>
+            <span className="hover:text-on-surface transition-colors truncate max-w-[140px] md:max-w-[180px]" title={old_policy.filename}>
+              {old_policy.filename}
+            </span>
+            <span className="text-outline-variant/80">vs</span>
+            <span className="hover:text-on-surface transition-colors truncate max-w-[140px] md:max-w-[180px]" title={new_policy.filename}>
+              {new_policy.filename}
+            </span>
             <span className="text-outline-variant/80">/</span>
-            <span className="text-primary font-semibold truncate max-w-xs md:max-w-sm flex items-center gap-1.5">
+            <span className="text-primary font-semibold truncate flex items-center gap-1.5">
               Forensic Impact Report
             </span>
           </div>
@@ -94,330 +219,362 @@ export function PrivacyReport() {
           <div className="h-4 w-px bg-outline-variant/60 mx-1 hidden lg:block" />
 
           {/* Quick Counter Badge */}
-          <div className="hidden sm:inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-error-container/20 border border-error/40 shadow-sm font-mono-badge text-[10px]">
+          <div className="hidden sm:inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-red-500/10 border border-red-500/30 shadow-sm font-mono-badge text-[10px]">
             <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-error opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-error" />
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-red-400" />
             </span>
-            <span className="text-error font-bold uppercase tracking-wider">
-              High Risk Legal Regression
+            <span className="text-red-400 font-semibold">
+              {counts.PRIVACY_WORSE} PRIVACY WORSE
             </span>
           </div>
         </div>
 
-        {/* Right Navigation & Actions */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Right: Workspace Navigation & Export Actions */}
+        <div className="flex items-center gap-2 md:gap-3">
+          <nav className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => navigate('/workspace')}
+              className="px-2.5 py-1 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container text-xs transition-colors cursor-pointer"
+            >
+              Workspace
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/changes')}
+              className="px-2.5 py-1 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container text-xs transition-colors cursor-pointer"
+            >
+              Ledger ({changes.length})
+            </button>
+            <button
+              type="button"
+              className="px-2.5 py-1 rounded bg-primary/20 text-primary border border-primary/40 text-xs font-semibold"
+            >
+              Report
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="px-2.5 py-1 rounded text-outline hover:text-on-surface hover:bg-surface-container text-xs transition-colors cursor-pointer"
+            >
+              + Upload
+            </button>
+          </nav>
+
           <button
             type="button"
-            onClick={() => navigate(`/comparison/${id || comparison.id}`)}
-            className="h-8 px-3 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant text-on-surface text-xs font-body flex items-center gap-1.5 transition-all cursor-pointer"
+            onClick={handleCopyLink}
+            className="p-1.5 px-2 rounded-lg border border-outline-variant bg-surface-container hover:bg-surface-container-high text-on-surface transition-colors cursor-pointer flex items-center gap-1.5 text-xs"
+            title="Copy Report Link"
           >
-            <ArrowLeft className="size-3.5 text-primary" />
-            <span className="hidden sm:inline">Split Redline</span> Workspace
+            <Share2 className="size-3.5" />
+            <span>{copied ? 'Copied!' : 'Share'}</span>
           </button>
 
           <button
             type="button"
-            onClick={() => navigate(`/comparison/${id || comparison.id}/changes`)}
-            className="h-8 px-3 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant text-on-surface text-xs font-body flex items-center gap-1.5 transition-all cursor-pointer"
+            onClick={handlePrint}
+            className="p-1.5 rounded-lg border border-outline-variant bg-surface-container hover:bg-surface-container-high text-on-surface transition-colors cursor-pointer"
+            title="Print / Save PDF"
           >
-            <span>Discrepancy Ledger</span>
+            <Printer className="size-4" />
           </button>
-
-          <div className="h-4 w-px bg-outline-variant/60 mx-1 hidden sm:block" />
 
           <button
             type="button"
-            onClick={() => navigate('/')}
-            className="h-8 px-3 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant text-on-surface text-xs font-body flex items-center gap-1.5 transition-all cursor-pointer"
-            title="Start New Comparison"
+            onClick={handleExportJson}
+            className="p-1.5 rounded-lg border border-outline-variant bg-surface-container hover:bg-surface-container-high text-on-surface transition-colors cursor-pointer"
+            title="Export Comparison JSON"
           >
-            <PlusCircle className="size-3.5 text-tertiary" />
-            <span className="hidden md:inline">+ New Comparison</span>
+            <FileDown className="size-4" />
           </button>
         </div>
       </header>
 
       {/* ─────────────────────────────────────────────────────────────
-          2. Main Audit Report Container
+          2. Executive Audit Report Body
          ───────────────────────────────────────────────────────────── */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-5 md:p-8 space-y-6">
-        {/* Top Header with Back & Export Actions */}
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-outline-variant">
-          <div>
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="px-2 py-0.5 rounded font-mono-badge text-mono-badge bg-error-container/20 text-error border border-error/40 font-bold uppercase tracking-wider">
-                COMPOSITE AUDIT VERDICT
-              </span>
-              <span className="text-outline text-xs font-mono-code">
-                Evaluated on {new Date(report.generatedAt).toLocaleDateString()}
-              </span>
-            </div>
-            <h1 className="font-headline-lg text-2xl md:text-3xl font-bold text-on-surface tracking-tight print:text-black">
-              Executive Privacy Impact Report
-            </h1>
-            <p className="font-body-md text-sm text-on-surface-variant mt-1 max-w-3xl print:text-gray-700">
-              Automated legal risk quantification evaluating {report.companyName} across data collection, retention sovereignty, subprocessor syndication, and algorithmic training rights.
-            </p>
-          </div>
-
-          {/* Action Buttons (Screen Only) */}
-          <div className="flex items-center gap-2 shrink-0 print:hidden">
-            <button
-              type="button"
-              onClick={handleCopyLink}
-              className="h-8 px-3 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant text-xs text-on-surface font-body flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <Share2 className="size-3.5 text-primary" />
-              {copied ? 'Copied URL!' : 'Share Audit'}
-            </button>
-            <button
-              type="button"
-              onClick={handleExportJson}
-              className="h-8 px-3 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant text-xs text-on-surface font-body flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <FileText className="size-3.5 text-primary" />
-              Export JSON
-            </button>
-            <button
-              type="button"
-              onClick={() => window.print()}
-              className="h-8 px-4 rounded-lg bg-primary-container hover:bg-primary text-on-primary-container text-xs font-mono-badge font-bold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
-            >
-              <Download className="size-3.5" />
-              Download PDF Report
-            </button>
-          </div>
-        </div>
-
-        {/* Executive Scorecard Banner */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-surface-container-low rounded-xl border border-outline-variant p-6 shadow-sm print:border-gray-300 print:bg-gray-50">
-          {/* Overall Health Score */}
-          <div className="flex flex-col justify-center items-center md:border-r border-outline-variant p-4 text-center print:border-gray-300">
-            <div className="text-[11px] font-mono-code text-outline uppercase tracking-wider mb-2 print:text-gray-600">
-              Composite Privacy Health Score
-            </div>
-            <div className="text-6xl md:text-7xl font-display font-bold text-error">
-              {report.overallScore}
-              <span className="text-2xl text-outline font-normal">/100</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-error text-xs font-mono-badge font-bold mt-3">
-              <TrendingDown className="size-4" />
-              <span>Dropped 41 points since v3.2 baseline</span>
-            </div>
-          </div>
-
-          {/* Executive Summary Narrative */}
-          <div className="md:col-span-2 flex flex-col justify-between p-2 space-y-3">
+      <main className="flex-grow max-w-7xl mx-auto w-full px-4 sm:px-6 py-8 space-y-8">
+        {/* Document Comparison Executive Summary Card */}
+        <section className="rounded-2xl bg-surface-container-low border border-outline-variant p-6 shadow-sm print:border-gray-300 print:bg-gray-50">
+          <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
             <div>
-              <div className="flex items-center gap-2 text-xs font-mono-code text-primary font-semibold uppercase mb-1">
-                <Sparkles className="size-3.5" />
-                Executive Audit Summary
+              <div className="flex items-center gap-2 font-mono-badge text-xs text-primary mb-2">
+                <Brain className="size-4" />
+                <span>EPHEMERAL FORENSIC AUDIT RECORD</span>
               </div>
-              <h3 className="font-headline-sm font-semibold text-lg text-on-surface print:text-black">
-                Significant Legal Regression: Secondary Use Rights &amp; Retention Expansion
-              </h3>
-              <p className="text-xs md:text-sm text-on-surface-variant leading-relaxed mt-2 font-body print:text-gray-700">
-                The updated Terms of Service introduce aggressive data expropriation rights, notably Section 4.2 asserting permission to train internal artificial intelligence and machine learning models on customer audio, video, transcripts, and telemetry without opt-out. Furthermore, data retention windows in Section 7.3 have transitioned from deterministic 90-day limits to unbounded discretionary durations.
+              <h1 className="text-2xl sm:text-3xl font-display font-semibold text-on-surface print:text-black">
+                Privacy Impact Audit: {old_policy.filename} vs {new_policy.filename}
+              </h1>
+              <p className="text-xs text-on-surface-variant print:text-gray-600 mt-1.5 leading-relaxed max-w-2xl">
+                Generated via deep semantic clause alignment and bi-directional natural language inference. Evaluates changes to user rights, data collection permissions, and disclosure scopes.
               </p>
             </div>
 
-            <div className="flex flex-wrap gap-2 pt-2">
-              <span className="px-2.5 py-1 rounded bg-error-container/25 text-error text-xs font-mono-code border border-error-container/50 font-semibold">
-                3 High-Risk Expansions
+            {/* Overall Verdict Badge */}
+            <div className="p-4 rounded-xl border text-center shrink-0 min-w-[220px] bg-surface-container print:bg-white print:border-gray-300">
+              <span className="block text-[10px] font-mono-badge uppercase text-outline mb-1">
+                Forensic Privacy Drift
               </span>
-              <span className="px-2.5 py-1 rounded bg-amber-950/30 text-amber-400 text-xs font-mono-code border border-amber-500/40 font-semibold">
-                1 Unclear Discretionary Shift
-              </span>
-              <span className="px-2.5 py-1 rounded bg-surface-container text-on-surface-variant text-xs font-mono-code border border-outline-variant">
-                1 Biometric Safeguard Added
+              {isNetWorse ? (
+                <div className="flex items-center justify-center gap-1.5 text-red-400 font-bold text-sm">
+                  <TrendingDown className="size-4" />
+                  <span>Adverse Rights Expansion</span>
+                </div>
+              ) : isNetBetter ? (
+                <div className="flex items-center justify-center gap-1.5 text-emerald-400 font-bold text-sm">
+                  <TrendingUp className="size-4" />
+                  <span>Protections Strengthened</span>
+                </div>
+              ) : (
+                <div className="flex items-center justify-center gap-1.5 text-amber-300 font-bold text-sm">
+                  <CheckCircle2 className="size-4" />
+                  <span>Neutral / Mixed Shift</span>
+                </div>
+              )}
+              <span className="block text-[11px] font-mono-code text-outline mt-1">
+                {counts.PRIVACY_WORSE} Worse vs {counts.PRIVACY_BETTER} Better
               </span>
             </div>
           </div>
-        </div>
 
-        {/* Category Performance & Recharts Visualizations */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Bar Comparison Chart */}
-          <div className="bg-surface-container-low rounded-xl border border-outline-variant p-5 flex flex-col justify-between shadow-sm print:border-gray-300">
-            <div className="mb-4">
-              <h3 className="font-headline-sm font-semibold text-on-surface text-base print:text-black">
-                Privacy Pillar Comparison
-              </h3>
-              <p className="text-xs text-on-surface-variant font-body print:text-gray-600">
-                Comparing Baseline (v3.2) vs Candidate (v4.0) across 5 core compliance domains
-              </p>
+          {/* Quick Metrics Bar */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-6 pt-6 border-t border-outline-variant print:border-gray-300">
+            <div className="p-3 rounded-xl bg-surface-container border border-outline-variant print:bg-white print:border-gray-200">
+              <span className="text-[10px] font-mono-badge uppercase text-outline block">Total Discrepancies</span>
+              <span className="text-2xl font-mono font-bold text-on-surface print:text-black">{summary.total_changes}</span>
+              <span className="text-[10px] text-outline block mt-0.5">{summary.valid_changes} valid · {summary.invalid_changes} filtered defects</span>
             </div>
 
-            <div className="h-64 w-full">
+            <div className="p-3 rounded-xl bg-surface-container border border-outline-variant print:bg-white print:border-gray-200">
+              <span className="text-[10px] font-mono-badge uppercase text-red-400 block">Privacy Worse</span>
+              <span className="text-2xl font-mono font-bold text-red-400">{counts.PRIVACY_WORSE}</span>
+              <span className="text-[10px] text-outline block mt-0.5">Expansive collection or sharing</span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-surface-container border border-outline-variant print:bg-white print:border-gray-200">
+              <span className="text-[10px] font-mono-badge uppercase text-emerald-400 block">Privacy Better</span>
+              <span className="text-2xl font-mono font-bold text-emerald-400">{counts.PRIVACY_BETTER}</span>
+              <span className="text-[10px] text-outline block mt-0.5">Strengthened user safeguards</span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-surface-container border border-outline-variant print:bg-white print:border-gray-200">
+              <span className="text-[10px] font-mono-badge uppercase text-amber-400 block">Unclear / Ambiguous</span>
+              <span className="text-2xl font-mono font-bold text-amber-400">{counts.UNCLEAR}</span>
+              <span className="text-[10px] text-outline block mt-0.5">Vague or mixed legal impact</span>
+            </div>
+          </div>
+        </section>
+
+        {/* ─────────────────────────────────────────────────────────────
+            3. Privacy Facet Distribution (Recharts)
+           ───────────────────────────────────────────────────────────── */}
+        {facetChartData.length > 0 && (
+          <section className="rounded-2xl bg-surface-container border border-outline-variant p-6 shadow-sm print:border-gray-300 print:bg-white">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-lg font-display font-semibold text-on-surface print:text-black">
+                  Privacy Facet Impact Distribution
+                </h2>
+                <p className="text-xs text-on-surface-variant print:text-gray-600 mt-0.5">
+                  Breakdown of detected modifications across privacy and data governance dimensions.
+                </p>
+              </div>
+            </div>
+
+            <div className="h-64 sm:h-72 w-full pt-2">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
-                  <XAxis dataKey="name" stroke="#958e9e" fontSize={11} tickLine={false} />
-                  <YAxis domain={[0, 100]} stroke="#958e9e" fontSize={11} tickLine={false} />
+                <BarChart data={facetChartData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                  <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+                  <YAxis allowDecimals={false} tick={{ fill: '#94a3b8', fontSize: 11 }} />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: '#17202e',
-                      borderColor: '#4a4453',
+                      backgroundColor: '#0f172a',
+                      borderColor: '#334155',
                       borderRadius: '8px',
                       fontSize: '12px',
-                      color: '#dae3f6',
                     }}
                   />
-                  <Bar dataKey="Previous" fill="#958e9e" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="Current" fill="#ffb4ab" radius={[4, 4, 0, 0]} />
+                  <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                  <Bar dataKey="Worse" fill="#f87171" name="Privacy Worse" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Better" fill="#34d399" name="Privacy Better" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Unclear" fill="#fbbf24" name="Unclear" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
+          </section>
+        )}
 
-            <div className="flex items-center justify-center gap-6 text-xs font-mono-code pt-3 border-t border-outline-variant/60 print:border-gray-200">
-              <span className="flex items-center gap-1.5 text-on-surface-variant">
-                <span className="size-3 rounded bg-[#958e9e]" /> Baseline v3.2
-              </span>
-              <span className="flex items-center gap-1.5 text-error font-semibold">
-                <span className="size-3 rounded bg-[#ffb4ab]" /> Candidate v4.0
-              </span>
-            </div>
+        {/* ─────────────────────────────────────────────────────────────
+            4. Key Adverse Changes (High Priority / Privacy Worse)
+           ───────────────────────────────────────────────────────────── */}
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-display font-semibold text-on-surface print:text-black flex items-center gap-2">
+              <ShieldAlert className="size-5 text-red-400" />
+              <span>Critical Adverse Modifications ({adverseChanges.length})</span>
+            </h2>
+            <button
+              type="button"
+              onClick={() => navigate('/changes')}
+              className="text-xs text-primary hover:underline font-semibold print:hidden"
+            >
+              View all in ledger →
+            </button>
           </div>
 
-          {/* Historical Score Progression */}
-          <div className="bg-surface-container-low rounded-xl border border-outline-variant p-5 flex flex-col justify-between shadow-sm print:border-gray-300">
-            <div className="mb-4">
-              <h3 className="font-headline-sm font-semibold text-on-surface text-base print:text-black">
-                Historical Autonomy Trajectory
-              </h3>
-              <p className="text-xs text-on-surface-variant font-body print:text-gray-600">
-                Temporal track record of policy revisions and resulting user autonomy scores
-              </p>
-            </div>
-
-            <div className="h-64 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={report.timeline} margin={{ top: 10, right: 20, left: -20, bottom: 20 }}>
-                  <XAxis dataKey="date" stroke="#958e9e" fontSize={11} tickLine={false} />
-                  <YAxis domain={[0, 100]} stroke="#958e9e" fontSize={11} tickLine={false} />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: '#17202e',
-                      borderColor: '#4a4453',
-                      borderRadius: '8px',
-                      fontSize: '12px',
-                      color: '#dae3f6',
-                    }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="score"
-                    stroke="#ffb4ab"
-                    strokeWidth={2.5}
-                    dot={{ r: 4, fill: '#ffb4ab' }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="text-xs font-mono-code text-outline pt-3 border-t border-outline-variant/60 print:border-gray-200">
-              Steepest decline recorded during Jan 2025 revision (-41 pts)
-            </div>
-          </div>
-        </div>
-
-        {/* Detailed Category Table */}
-        <div className="bg-surface-container-low rounded-xl border border-outline-variant overflow-hidden shadow-sm print:border-gray-300">
-          <div className="p-4 border-b border-outline-variant bg-surface-container-lowest print:border-gray-200 print:bg-gray-100">
-            <h3 className="font-headline-sm font-semibold text-on-surface text-base print:text-black">
-              Detailed Pillar Health Breakdown
-            </h3>
-          </div>
-
-          <div className="divide-y divide-outline-variant/60 print:divide-gray-200">
-            {report.categories.map((cat, idx) => (
-              <div
-                key={idx}
-                className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-surface-container-high/30 transition-colors"
-              >
-                <div className="space-y-1">
-                  <div className="font-medium text-sm text-on-surface font-body print:text-black">
-                    {cat.name}
-                  </div>
-                  <div className="text-xs text-on-surface-variant font-mono-code">
-                    {cat.changes} clause modification(s) audited
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-6">
-                  <div className="text-right">
-                    <div className="font-mono-code text-base font-bold text-on-surface print:text-black">
-                      {cat.score}{' '}
-                      <span className="text-xs text-outline font-normal">
-                        (was {cat.previousScore})
+          {adverseChanges.length > 0 ? (
+            <div className="space-y-3">
+              {adverseChanges.map((change, idx) => (
+                <div
+                  key={change.change_id}
+                  className="rounded-xl bg-surface-container border border-red-500/30 p-4 space-y-2.5 print:border-gray-300 print:bg-white"
+                >
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono-badge text-[10px] text-outline bg-surface-container-lowest px-1.5 py-0.5 rounded border border-outline-variant">
+                        #{idx + 1} ({change.change_id})
                       </span>
+                      <h4 className="font-semibold text-on-surface print:text-black">
+                        {resolveChangeCardHeading(change, oldSectionContext, newSectionContext)}
+                      </h4>
                     </div>
-                    <div
-                      className={`text-xs font-mono-code ${
-                        cat.score < cat.previousScore
-                          ? 'text-error font-semibold'
-                          : cat.score > cat.previousScore
-                          ? 'text-tertiary font-semibold'
-                          : 'text-outline'
-                      }`}
-                    >
-                      {cat.score < cat.previousScore ? (
-                        <span>▼ {cat.previousScore - cat.score} pts</span>
-                      ) : cat.score > cat.previousScore ? (
-                        <span>▲ {cat.score - cat.previousScore} pts</span>
-                      ) : (
-                        <span>— unchanged</span>
-                      )}
+                    <div className="flex items-center gap-1.5">
+                      <ChangeTypeBadge type={change.change_type} size="sm" />
+                      <PrivacyImpactBadge impact={change.privacy_impact} size="sm" />
                     </div>
                   </div>
 
-                  <Badge
-                    label={cat.trend.toUpperCase()}
-                    variant={cat.trend === 'declining' ? 'danger' : 'safe'}
-                  />
+                  <p className="text-xs text-on-surface print:text-black leading-relaxed">
+                    {change.classification?.rationale || 'Expansive privacy modifications identified in this clause.'}
+                  </p>
+
+                  {change.classification?.evidence && change.classification.evidence.length > 0 && (
+                    <div className="p-2 rounded bg-surface-container-lowest border border-outline-variant font-mono-code text-[11px] text-red-300 print:text-red-700">
+                      <strong>Matched Evidence:</strong> "{change.classification.evidence[0]}"
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1 text-xs">
+                    {change.before?.old_clause?.text && (
+                      <div className="p-2.5 rounded bg-surface-container-lowest border border-outline-variant">
+                        <span className="text-[10px] font-mono-badge uppercase text-outline block mb-1">Baseline</span>
+                        <p className="font-clause-diff text-[11.5px] text-on-surface-variant line-through">{change.before.old_clause.text}</p>
+                      </div>
+                    )}
+                    {change.before?.new_clause?.text && (
+                      <div className="p-2.5 rounded bg-surface-container-lowest border border-outline-variant">
+                        <span className="text-[10px] font-mono-badge uppercase text-primary block mb-1">Revised</span>
+                        <p className="font-clause-diff text-[11.5px] text-on-surface">{change.before.new_clause.text}</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-6 rounded-xl bg-surface-container border border-outline-variant text-center text-xs text-outline">
+              No adverse privacy modifications detected between these policy versions.
+            </div>
+          )}
+        </section>
 
-        {/* Forensic Mitigation & Recommendations */}
-        <div className="bg-surface-container-low rounded-xl border border-primary/40 p-6 space-y-4 shadow-sm print:border-gray-300">
-          <div className="flex items-center gap-2 text-primary font-headline-sm font-semibold text-base print:text-black">
-            <ShieldAlert className="size-5" />
-            Recommended Legal &amp; Technical Safeguards
-          </div>
+        {/* ─────────────────────────────────────────────────────────────
+            Protective Safeguards Strengthened
+           ───────────────────────────────────────────────────────────── */}
+        {protectiveChanges.length > 0 && (
+          <section className="space-y-4">
+            <h2 className="text-lg font-display font-semibold text-on-surface print:text-black flex items-center gap-2">
+              <ShieldCheck className="size-5 text-emerald-400" />
+              <span>Protective Safeguards Strengthened ({protectiveChanges.length})</span>
+            </h2>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs leading-relaxed font-body">
-            <div className="p-4 rounded-lg bg-surface-container-lowest border border-outline-variant space-y-2 print:border-gray-300">
-              <div className="font-semibold text-on-surface print:text-black">
-                1. Enterprise DPA Override
+            <div className="space-y-3">
+              {protectiveChanges.map((change, idx) => (
+                <div
+                  key={change.change_id}
+                  className="rounded-xl bg-surface-container border border-emerald-500/30 p-4 space-y-2.5 print:border-gray-300 print:bg-white"
+                >
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono-badge text-[10px] text-outline bg-surface-container-lowest px-1.5 py-0.5 rounded border border-outline-variant">
+                        #{idx + 1} ({change.change_id})
+                      </span>
+                      <h4 className="font-semibold text-on-surface print:text-black">
+                        {resolveChangeCardHeading(change, oldSectionContext, newSectionContext)}
+                      </h4>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <ChangeTypeBadge type={change.change_type} size="sm" />
+                      <PrivacyImpactBadge impact={change.privacy_impact} size="sm" />
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-on-surface print:text-black leading-relaxed">
+                    {change.classification?.rationale || 'Strengthened privacy rights and protection safeguards.'}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ─────────────────────────────────────────────────────────────
+            5. Document Technical Details & Metrics
+           ───────────────────────────────────────────────────────────── */}
+        <section className="rounded-2xl bg-surface-container border border-outline-variant p-6 space-y-4 print:border-gray-300 print:bg-white">
+          <h2 className="text-base font-display font-semibold text-on-surface print:text-black">
+            Document Ingestion & Alignment Statistics
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs font-mono-code">
+            <div className="p-4 rounded-xl bg-surface-container-lowest border border-outline-variant space-y-2">
+              <span className="text-red-400 font-bold block">BASELINE: {old_policy.filename}</span>
+              <div className="flex justify-between border-b border-outline-variant/40 pb-1">
+                <span className="text-outline">File Format:</span>
+                <span className="text-on-surface uppercase">{old_policy.file_type}</span>
               </div>
-              <p className="text-on-surface-variant print:text-gray-700">
-                Execute a custom Data Processing Addendum explicitly forbidding secondary AI/ML model training on corporate communication pipelines.
-              </p>
+              <div className="flex justify-between border-b border-outline-variant/40 pb-1">
+                <span className="text-outline">Total Clauses:</span>
+                <span className="text-on-surface">{old_policy.clause_count}</span>
+              </div>
+              <div className="flex justify-between border-b border-outline-variant/40 pb-1">
+                <span className="text-outline">Word Count:</span>
+                <span className="text-on-surface">{old_policy.word_count.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-outline">Character Count:</span>
+                <span className="text-on-surface">{old_policy.character_count.toLocaleString()}</span>
+              </div>
             </div>
 
-            <div className="p-4 rounded-lg bg-surface-container-lowest border border-outline-variant space-y-2 print:border-gray-300">
-              <div className="font-semibold text-on-surface print:text-black">
-                2. Hard Retention Enforcement
+            <div className="p-4 rounded-xl bg-surface-container-lowest border border-outline-variant space-y-2">
+              <span className="text-blue-400 font-bold block">REVISED: {new_policy.filename}</span>
+              <div className="flex justify-between border-b border-outline-variant/40 pb-1">
+                <span className="text-outline">File Format:</span>
+                <span className="text-on-surface uppercase">{new_policy.file_type}</span>
               </div>
-              <p className="text-on-surface-variant print:text-gray-700">
-                Contractually mandate verifiable 90-day cryptographic purge certificates rather than consenting to discretionary business retention clauses.
-              </p>
-            </div>
-
-            <div className="p-4 rounded-lg bg-surface-container-lowest border border-outline-variant space-y-2 print:border-gray-300">
-              <div className="font-semibold text-on-surface print:text-black">
-                3. Subprocessor Notice Covenant
+              <div className="flex justify-between border-b border-outline-variant/40 pb-1">
+                <span className="text-outline">Total Clauses:</span>
+                <span className="text-on-surface">{new_policy.clause_count}</span>
               </div>
-              <p className="text-on-surface-variant print:text-gray-700">
-                Require 30-day advance electronic notification and opt-out rights prior to customer telemetry exposure to advertising syndication partners.
-              </p>
+              <div className="flex justify-between border-b border-outline-variant/40 pb-1">
+                <span className="text-outline">Word Count:</span>
+                <span className="text-on-surface">{new_policy.word_count.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-outline">Character Count:</span>
+                <span className="text-on-surface">{new_policy.character_count.toLocaleString()}</span>
+              </div>
             </div>
           </div>
-        </div>
+        </section>
       </main>
+
+      {/* Footer */}
+      <footer className="w-full bg-surface-container-lowest border-t border-outline-variant py-4 text-center text-xs text-outline print:hidden">
+        SneakyToS · Privacy Policy Forensic Audit Engine
+      </footer>
     </div>
   );
 }
