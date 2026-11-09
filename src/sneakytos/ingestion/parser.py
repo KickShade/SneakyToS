@@ -27,7 +27,13 @@ def normalize_text(text: str) -> str:
 
 
 def extract_txt(path: Path) -> str:
-    return path.read_text(encoding="utf-8-sig")
+    raw_bytes = path.read_bytes()
+    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return raw_bytes.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw_bytes.decode("utf-8", errors="replace")
 
 
 _PAGE_NUMBER_RE = re.compile(

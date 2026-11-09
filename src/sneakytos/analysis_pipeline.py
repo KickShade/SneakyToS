@@ -220,10 +220,28 @@ def analyze_policy_pair(
     analyzed_changes = []
     nli_initialized = nli_analyzer is not None
 
+    # Pre-validate events
+    validations = {
+        change.change_id: validator.validate(change)
+        for change in detected_changes
+    }
+
+    # Precompute NLI in high-throughput batches when available
+    nli_results_map: dict[str, Any] = {}
+    if nli_analyzer is not None and hasattr(nli_analyzer, "analyze_changes_batch"):
+        valid_paired = [
+            c for c in detected_changes
+            if c.change_type in PAIRED_CHANGE_TYPES and validations[c.change_id].is_valid
+        ]
+        if valid_paired:
+            nli_results_map = nli_analyzer.analyze_changes_batch(
+                valid_paired, batch_size=16
+            )
+
     for change in detected_changes:
 
         # Stage 1: Event validity.
-        validation = validator.validate(change)
+        validation = validations[change.change_id]
 
         nli_result = None
         privacy_features = None
@@ -242,13 +260,16 @@ def analyze_policy_pair(
             # NLI is only run for paired semantic changes.
             if change.change_type in PAIRED_CHANGE_TYPES:
 
-                if not nli_initialized:
-                    from sneakytos.nli import NLIAnalyzer
+                if change.change_id in nli_results_map:
+                    nli_result = nli_results_map[change.change_id]
+                else:
+                    if not nli_initialized:
+                        from sneakytos.nli import NLIAnalyzer
 
-                    nli_analyzer = NLIAnalyzer()
-                    nli_initialized = True
+                        nli_analyzer = NLIAnalyzer()
+                        nli_initialized = True
 
-                nli_result = nli_analyzer.analyze_change(change)
+                    nli_result = nli_analyzer.analyze_change(change)
 
             # Stage 3: User-centric privacy-impact classification.
             classification = classifier.classify(

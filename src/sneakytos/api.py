@@ -111,12 +111,17 @@ async def compare_policies(
             await save_upload(old_policy, old_path)
             await save_upload(new_policy, new_path)
 
-            result = analyze_policy_pair(
-                str(old_path),
-                str(new_path),
-                nli_analyzer=nli_analyzer,
-                aligner=clause_aligner,
-            )
+            from anyio import to_thread
+
+            def _run_comparison():
+                return analyze_policy_pair(
+                    str(old_path),
+                    str(new_path),
+                    nli_analyzer=nli_analyzer,
+                    aligner=clause_aligner,
+                )
+
+            result = await to_thread.run_sync(_run_comparison)
 
             return result.to_dict()
 
