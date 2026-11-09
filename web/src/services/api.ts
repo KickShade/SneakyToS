@@ -13,8 +13,8 @@ export const API_BASE_URL =
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  // Note: Do not set default Content-Type so multipart/form-data sets boundary correctly
-  timeout: 180000, // 3 minutes timeout for NLP inference
+  // 6 minutes timeout for deep neural inference on large policies (e.g. Google's 600+ clauses)
+  timeout: 360000,
 });
 
 /**

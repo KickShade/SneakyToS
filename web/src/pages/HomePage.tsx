@@ -4,7 +4,7 @@
 // Fully integrated with FastAPI backend (POST /api/v1/compare)
 // ============================================================================
 
-import { useState, useRef, type DragEvent } from 'react';
+import { useState, useEffect, useRef, type DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ShieldCheck,
@@ -24,12 +24,30 @@ import {
 } from 'lucide-react';
 import { useComparison } from '@/context/ComparisonContext';
 import { validatePolicyFile } from '@/services/comparisonService';
+import { checkBackendHealth } from '@/services/api';
 import type { StagedFile } from '@/types';
 
 export function HomePage() {
   const navigate = useNavigate();
   const { comparisonData, isLoading, error, executeCompare, setError, clearComparison } =
     useComparison();
+
+  // Real-time backend status checking
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+
+  useEffect(() => {
+    let mounted = true;
+    checkBackendHealth()
+      .then(() => {
+        if (mounted) setBackendStatus('online');
+      })
+      .catch(() => {
+        if (mounted) setBackendStatus('offline');
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   // Baseline (OLD) Document
   const [oldFile, setOldFile] = useState<StagedFile | null>(null);
@@ -290,9 +308,23 @@ export function HomePage() {
                 Upload original and revised policy documents (.txt or .pdf, max 20 MB each) for deep neural clause alignment.
               </p>
             </div>
-            <div className="flex items-center gap-2 font-mono-badge text-xs text-outline">
-              <ShieldCheck className="size-4 text-tertiary" />
-              <span>FastAPI Backend Connected</span>
+            <div className="flex items-center gap-2 font-mono-badge text-xs">
+              {backendStatus === 'online' ? (
+                <>
+                  <ShieldCheck className="size-4 text-emerald-400" />
+                  <span className="text-emerald-400">FastAPI Backend Connected</span>
+                </>
+              ) : backendStatus === 'offline' ? (
+                <>
+                  <AlertCircle className="size-4 text-red-400" />
+                  <span className="text-red-400">Backend Offline (http://127.0.0.1:8000)</span>
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="size-4 text-outline animate-spin" />
+                  <span className="text-outline">Connecting Backend...</span>
+                </>
+              )}
             </div>
           </div>
 

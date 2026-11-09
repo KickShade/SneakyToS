@@ -94,6 +94,13 @@ export async function comparePolicies(
       const responseDetail = err.response?.data?.detail;
 
       if (!err.response) {
+        if (err.code === 'ECONNABORTED' || err.message?.toLowerCase().includes('timeout')) {
+          throw new ComparisonApiError(
+            'Analysis timed out: This document pair is exceptionally large (e.g. Google Privacy Policy with 600+ clauses). Please allow another moment or retry.',
+            408,
+            'Analysis timed out on large document'
+          );
+        }
         // Network offline / connection refused
         throw new ComparisonApiError(
           'Cannot connect to SneakyToS backend server at ' +
