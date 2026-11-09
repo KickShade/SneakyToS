@@ -1,0 +1,144 @@
+@import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────
+   SneakyToS — Tactical Policy Diff Engine Design Tokens (Stitch)
+   ───────────────────────────────────────────────────────────── */
+
+@theme {
+  /* ── Canvas & Surfaces ── */
+  --color-background:                 #0a1421;
+  --color-surface:                    #0a1421;
+  --color-surface-dim:                #0a1421;
+  --color-surface-bright:             #313a48;
+  --color-surface-container-lowest:   #060e1c;
+  --color-surface-container-low:      #131c2a;
+  --color-surface-container:          #17202e;
+  --color-surface-container-high:     #212a39;
+  --color-surface-container-highest:  #2c3544;
+  --color-surface-variant:            #2c3544;
+
+  /* ── Text & Typography ── */
+  --color-on-background:              #dae3f6;
+  --color-on-surface:                 #dae3f6;
+  --color-on-surface-variant:         #cbc3d5;
+  --color-outline:                    #958e9e;
+  --color-outline-variant:            #4a4453;
+  --color-inverse-surface:            #dae3f6;
+  --color-inverse-on-surface:         #28313f;
+
+  /* ── Primary (Tactical Purple Brand Accent) ── */
+  --color-primary:                    #d2bcff;
+  --color-on-primary:                 #3e008f;
+  --color-primary-container:          #a279f9;
+  --color-on-primary-container:       #36007e;
+  --color-primary-fixed:              #eaddff;
+  --color-primary-fixed-dim:          #d2bcff;
+  --color-inverse-primary:            #6e43c2;
+  --color-surface-tint:               #d2bcff;
+
+  /* ── Secondary (Blue / Lavender) ── */
+  --color-secondary:                  #b6c4ff;
+  --color-on-secondary:               #002780;
+  --color-secondary-container:        #0d3bad;
+  --color-on-secondary-container:     #9eb2ff;
+  --color-secondary-fixed:            #dce1ff;
+  --color-secondary-fixed-dim:        #b6c4ff;
+
+  /* ── Tertiary (Emerald / Safe Safeguards) ── */
+  --color-tertiary:                   #53df8f;
+  --color-on-tertiary:                #00391d;
+  --color-tertiary-container:         #00a660;
+  --color-on-tertiary-container:      #003118;
+  --color-tertiary-fixed:             #72fca9;
+  --color-tertiary-fixed-dim:         #53df8f;
+
+  /* ── Error / Danger (Crimson / Regressions) ── */
+  --color-error:                      #ffb4ab;
+  --color-on-error:                   #690005;
+  --color-error-container:            #93000a;
+  --color-on-error-container:         #ffdad6;
+
+  /* ── Fonts ── */
+  --font-display:                     "Geist", sans-serif;
+  --font-headline:                    "Geist", sans-serif;
+  --font-body:                        "Inter", sans-serif;
+  --font-clause-diff:                 "Inter", sans-serif;
+  --font-mono-code:                   "JetBrains Mono", monospace;
+  --font-mono-badge:                  "JetBrains Mono", monospace;
+  --font-mono-gutter:                 "JetBrains Mono", monospace;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Base Global Styles
+   ───────────────────────────────────────────────────────────── */
+
+html {
+  color-scheme: dark;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-surface-container-lowest);
+  color: var(--color-on-surface);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.57;
+  letter-spacing: -0.005em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Stitch Tactical Mesh & Glow Effects
+   ───────────────────────────────────────────────────────────── */
+
+.tactical-mesh {
+  background-image: 
+    radial-gradient(circle at 50% 0%, rgba(162, 121, 249, 0.12) 0%, transparent 65%),
+    linear-gradient(to right, rgba(74, 68, 83, 0.12) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(74, 68, 83, 0.12) 1px, transparent 1px);
+  background-size: 100% 100%, 32px 32px, 32px 32px;
+}
+
+.glow-primary {
+  box-shadow: 0 0 20px -3px rgba(162, 121, 249, 0.35);
+}
+
+.glow-primary-lg {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 16px -2px rgba(155, 114, 242, 0.4);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Tactical Scrollbars
+   ───────────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0a1421;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2c3544;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4a4453;
+}
+
+.custom-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #2c3544 #0a1421;
+}
