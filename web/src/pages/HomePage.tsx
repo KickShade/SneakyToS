@@ -7,7 +7,6 @@
 import { useState, useRef, type DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Shield,
   ShieldCheck,
   Lock,
   FileText,
@@ -117,11 +116,8 @@ export function HomePage() {
             <button
               type="button"
               onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-              className="text-lg font-display font-semibold tracking-tight text-on-surface flex items-center gap-2 text-left"
+              className="text-lg font-display font-semibold tracking-tight text-on-surface text-left cursor-pointer"
             >
-              <div className="w-7 h-7 rounded bg-surface-container-high border border-outline-variant flex items-center justify-center text-primary-container">
-                <Shield className="size-4 text-primary fill-primary/20" />
-              </div>
               <span>SneakyToS</span>
             </button>
 
@@ -658,7 +654,6 @@ export function HomePage() {
       <footer className="w-full bg-surface-container-lowest border-t border-outline-variant py-6">
         <div className="max-w-7xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-outline">
           <div className="flex items-center gap-2">
-            <Shield className="size-4 text-primary" />
             <span className="font-semibold text-on-surface">SneakyToS</span>
             <span>— Advanced Privacy Policy Difference & Impact Intelligence</span>
           </div>
