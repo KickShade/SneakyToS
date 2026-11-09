@@ -1,155 +1,312 @@
-# SneakyToS
+# SneakyToS 🛡️⚖️
 
-SneakyToS compares two versions of a privacy policy and explains detected changes that may affect a user's privacy. It combines clause segmentation and semantic alignment with event validation, privacy feature extraction, natural language inference (NLI), and a rules based impact classifier.
+**SneakyToS** is an automated, forensic privacy-policy change detection and impact analysis platform. It analyzes two chronological versions of a privacy policy (Baseline vs. Revised) to detect subtle, undisclosed, or expansive modifications to privacy terms.
 
-The repository contains the policy analysis research work and a FastAPI backend that a frontend can integrate with. The frontend is a separate deliverable; the backend contract and local integration steps are documented below and in [`docs/api_handover.md`](docs/api_handover.md).
+Combining dense clause embeddings, semantic alignment, event-quality validation, natural language inference (NLI), and a rules-based privacy impact classifier, SneakyToS translates raw legal diffs into actionable, forensic privacy risk assessments.
 
-## What the engine does
+The project pairs an end-to-end **NLP/ML backend pipeline** built with FastAPI and Hugging Face Transformers with a modern, high-fidelity **interactive frontend** designed with Google Stitch and built using React, TypeScript, and Tailwind CSS.
 
-Given an old and new TXT or text based PDF policy, the engine:
+---
 
-1. Extracts and normalizes policy text.
-2. Segments each policy into clauses.
-3. Semantically aligns corresponding clauses and detects additions, deletions, modifications, and restructures.
-4. Validates detected events and skips privacy classification for invalid events.
-5. Extracts privacy related features and interprets changes in sharing, recipients, retention, and modality.
-6. Runs NLI for paired clause changes.
-7. Produces a privacy impact, explanation, evidence, facets, and confidence where the event is valid.
+## 📑 Table of Contents
 
-Privacy impact labels are:
+- [What SneakyToS Does](#-what-sneakytos-does)
+- [System Architecture & Pipeline](#-system-architecture--pipeline)
+- [Prerequisites](#-prerequisites)
+- [Running the Project](#-running-the-project)
+  - [1. Running Backend & Frontend Together](#1-running-backend--frontend-together-recommended)
+  - [2. Running the Backend Separately](#2-running-the-backend-separately)
+  - [3. Running the Frontend Separately](#3-running-the-frontend-separately)
+- [Core Application Screens](#-core-application-screens)
+- [API Contract & Integration](#-api-contract--integration)
+- [Repository Structure](#-repository-structure)
+- [Authors & Credits](#-authors--credits)
+- [Collaboration & Inquiries](#-collaboration--inquiries)
+- [License & Disclaimer](#-license--disclaimer)
 
-| Label | Meaning |
+---
+
+## 🎯 What SneakyToS Does
+
+When companies update their Terms of Service or Privacy Policies, changes are often silent, opaque, or bury expansive permissions inside complex legalese. SneakyToS solves this by automating policy comparison:
+
+1. **Ingests Documents:** Parses plain text (`.txt`) and PDF (`.pdf`) documents, cleaning headers, footers, and page furniture.
+2. **Clause Segmentation:** Normalizes text into sentence- and clause-level boundaries while tracking document position.
+3. **Semantic Alignment:** Uses dense neural embeddings to align corresponding clauses between Baseline and Revised versions, identifying `MODIFIED`, `ADDED`, `DELETED`, and `RESTRUCTURED` clauses.
+4. **Event Quality Validation:** Filters out boilerplate changes (e.g. corporate address updates, typo fixes, renumbering) to focus strictly on genuine legal and permission modifications.
+5. **Feature Extraction & Interpretation:** Detects changes in data sharing, third-party disclosures, retention limits, tracking, and user consent mechanisms.
+6. **Natural Language Inference (NLI):** Applies a cross-encoder NLI model to evaluate directional entailment, contradiction, and semantic shift between clause pairs.
+7. **Privacy Impact Classification:** Categorizes changes into standardized audit labels:
+
+| Privacy Impact Label | Meaning |
 |---|---|
-| `PRIVACY_WORSE` | The new text appears to expand data use or weaken a stated protection. |
-| `PRIVACY_BETTER` | The new text appears to narrow data use or strengthen a stated protection. |
-| `NO_PRIVACY_EFFECT` | No material privacy effect was identified. |
-| `UNCLEAR` | Available text does not support a reliable direction. |
+| `PRIVACY_WORSE` | The revision expands data collection, broadens sharing, extends retention, or weakens user control. |
+| `PRIVACY_BETTER` | The revision narrows data use, introduces user opt-outs, shortens retention, or strengthens safeguards. |
+| `NO_PRIVACY_EFFECT` | The modification represents cosmetic rephrasing or procedural updates with no material privacy delta. |
+| `UNCLEAR` | Text modification is ambiguous or insufficient to assign a definitive directional impact. |
 
-These are analysis results, not legal advice or a guarantee that every policy change has been found. Keep `UNCLEAR` visible in the frontend. A `VALID` event means the text passed local quality checks; it does not mean the classification is certain.
+---
 
-## Backend quick start
+## ⚙️ System Architecture & Pipeline
 
-### Requirements
-
-- Python 3.10 or newer.
-- Internet access the first time the service loads its Hugging Face models.
-- Enough memory and disk space for PyTorch and both language models. CPU inference works but can take time; a CUDA enabled PyTorch installation can use a compatible GPU.
-
-### Install and start
-
-From the repository root, create and activate a virtual environment, then install the API dependencies:
-
-```powershell
-py -3.10 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements-api.txt
-$env:PYTHONPATH = "src"
-uvicorn sneakytos.api:app --host 127.0.0.1 --port 8000
+```
+[Baseline Policy] ───┐
+                      ├──> Ingestion & Segmentation ──> Dense Embedding Alignment
+[Revised Policy]  ───┘       (PyMuPDF & Parser)           (MiniLM-L6-v2)
+                                                                 │
+                                                                 ▼
+[Forensic Audit Report] <── Rules-Based Impact <── NLI Model <── Event Validator
+ (Interactive UI / PDF)       Classifier       (DeBERTa-v3)    (Filters Noise)
 ```
 
-On macOS or Linux, activate `.venv` with `source .venv/bin/activate`, set `PYTHONPATH=src`, then run the same `uvicorn` command. Model weights are loaded once during application startup and cached by Hugging Face. The first launch can take a while; the API begins serving after model initialization completes.
+- **Sentence Transformers (`sentence-transformers/all-MiniLM-L6-v2`):** Computes dense semantic representations for clause matching across versions.
+- **Cross-Encoder NLI (`cross-encoder/nli-deberta-v3-base`):** Evaluates semantic shift and directional entailment for paired modifications.
+- **Rules-Based Forensic Classifier:** Synthesizes lexical features, semantic similarity, and NLI signals into human-readable explanations, evidence quotes, and confidence scores.
 
-Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for FastAPI's interactive documentation. Stop the server with Ctrl+C.
+---
 
-### Run the tests
+## 💻 Prerequisites
 
-Install `requirements-dev.txt` instead of `requirements-api.txt` if you also want pytest. From the repository root:
+Ensure you have the following installed on your system:
 
+- **Python 3.10 or newer** (with `pip` and `venv`)
+- **Node.js 18.x or newer** (with `npm`)
+- **Git**
+- Adequate RAM (minimum 8 GB recommended) for running local NLP transformer models.
+
+---
+
+## 🚀 Running the Project
+
+### 1. Running Backend & Frontend Together (Recommended)
+
+To run the complete system locally, launch the backend and frontend servers in two separate terminal windows:
+
+#### Terminal 1 — Backend API Server:
+
+**On Windows (PowerShell):**
+```powershell
+# 1. Create and activate Python virtual environment
+py -3.10 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# 2. Upgrade pip and install API dependencies
+python -m pip install --upgrade pip
+python -m pip install -r requirements-api.txt
+
+# 3. Set Python path and start the FastAPI server
+$env:PYTHONPATH = "src"
+uvicorn sneakytos.api:app --host 127.0.0.1 --port 8000 --reload
+```
+
+**On macOS / Linux:**
+```bash
+# 1. Create and activate Python virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 2. Upgrade pip and install API dependencies
+pip install --upgrade pip
+pip install -r requirements-api.txt
+
+# 3. Set Python path and start the FastAPI server
+export PYTHONPATH="src"
+uvicorn sneakytos.api:app --host 127.0.0.1 --port 8000 --reload
+```
+
+> **Note:** On first startup, Hugging Face will download the required transformer models (`all-MiniLM-L6-v2` and `nli-deberta-v3-base`). Once loaded, the API will log that it is listening on `http://127.0.0.1:8000`.
+
+#### Terminal 2 — Frontend Application:
+
+```bash
+# 1. Navigate to the frontend directory
+cd web
+
+# 2. Install dependencies
+npm install
+
+# 3. Start the Vite development server
+npm run dev
+```
+
+The frontend application will start and be accessible at:
+👉 **[http://localhost:5173](http://localhost:5173)**
+
+---
+
+### 2. Running the Backend Separately
+
+You can test and interact with the FastAPI backend independently without the frontend.
+
+1. Activate your virtual environment and install dependencies:
+   ```bash
+   pip install -r requirements-api.txt
+   ```
+2. Start the Uvicorn server:
+   ```powershell
+   # Windows PowerShell
+   $env:PYTHONPATH = "src"
+   uvicorn sneakytos.api:app --host 127.0.0.1 --port 8000 --reload
+   ```
+   ```bash
+   # macOS / Linux
+   export PYTHONPATH="src"
+   uvicorn sneakytos.api:app --host 127.0.0.1 --port 8000 --reload
+   ```
+3. **Interactive Swagger Documentation:** Open **[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)** to test the `/api/v1/compare` endpoint interactively with file uploads.
+4. **Health Check:** Confirm the service is active at **[http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)**.
+
+#### Running Backend Automated Tests:
 ```powershell
 $env:PYTHONPATH = "src"
 python -m pytest -v
 ```
+The test suite validates clause segmentation, similarity scoring, event validation, and API request handling.
 
-The regression suite is designed to run without downloading model weights; alignment tests replace the encoder with a deterministic test double. Starting the API loads the real models and needs the model cache or network access.
+---
 
-The default models are `sentence-transformers/all-MiniLM-L6-v2` for clause alignment and `cross-encoder/nli-deberta-v3-base` for NLI on paired changes.
+### 3. Running the Frontend Separately
 
-## Frontend integration
+The frontend can be built and run standalone using mock or real backend data:
 
-The frontend development server can run on `http://localhost:5173` or `http://127.0.0.1:5173`; both are allowed by the backend CORS policy.
+1. Navigate to the `web/` directory:
+   ```bash
+   cd web
+   ```
+2. Install package dependencies:
+   ```bash
+   npm install
+   ```
+3. Configure environment variables (optional, defaults to `http://127.0.0.1:8000`):
+   Create a `.env` file inside `web/`:
+   ```env
+   VITE_API_BASE_URL=http://127.0.0.1:8000
+   ```
+4. Start the development server:
+   ```bash
+   npm run dev
+   ```
+5. Build for production:
+   ```bash
+   npm run build
+   ```
+   This performs a full TypeScript check (`tsc -b`) and bundles assets using Vite.
 
-For another frontend origin, set `SNEAKYTOS_CORS_ORIGINS` to a comma separated allowlist before starting Uvicorn. For example, `$env:SNEAKYTOS_CORS_ORIGINS = "http://localhost:3000"` in PowerShell. Avoid `*` when credentials are enabled.
+---
 
-### Available endpoints
+## 🖥️ Core Application Screens
 
-| Method and route | Purpose |
-|---|---|
-| `GET /health` | Process health response. It does not independently confirm model readiness. |
-| `POST /api/v1/compare` | Compare two uploaded policy files and return the analysis JSON. |
-| `GET /docs` | Interactive API docs provided by FastAPI. |
+- **New Comparison / Upload:** Drag-and-drop dual document uploader supporting `.txt` and `.pdf` files up to 20 MB each.
+- **Comparison Workspace:** Synchronized, side-by-side clause reading pane with color-coded diff highlights, section hierarchy resolution, and instant search filtering.
+- **Forensic Discrepancy Ledger (`/changes`):** Drill-down analysis cards detailing every detected change, semantic similarity percentage, NLI entailment distribution, matched lexical evidence, and explanation rationales.
+- **Privacy Impact Audit Report (`/report`):** Executive-level summary with visual risk distributions, facet breakdowns (data sharing, retention, user consent), and a print-ready export format.
 
-`POST /api/v1/compare` accepts `multipart/form-data` with two required file parts:
+---
 
-| Field | Accepted extensions | Maximum size |
-|---|---|---|
-| `old_policy` | `.txt`, `.pdf` | 20 MiB |
-| `new_policy` | `.txt`, `.pdf` | 20 MiB |
+## 🔌 API Contract & Integration
 
-Browser example:
+### `POST /api/v1/compare`
+Compares two policy documents via `multipart/form-data`:
 
-```javascript
-const form = new FormData();
-form.append("old_policy", oldFile);
-form.append("new_policy", newFile);
+- `old_policy`: Baseline document (`.txt` or `.pdf`, max 20 MB)
+- `new_policy`: Revised document (`.txt` or `.pdf`, max 20 MB)
 
-const response = await fetch("http://127.0.0.1:8000/api/v1/compare", {
-  method: "POST",
-  body: form,
-});
+#### Example Request (cURL):
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/compare" \
+  -F "old_policy=@baseline_policy.txt" \
+  -F "new_policy=@revised_policy.txt"
+```
 
-const result = await response.json();
-if (!response.ok) {
-  throw new Error(result.detail ?? "Policy comparison failed.");
+#### Response Summary:
+```json
+{
+  "old_policy": { "filename": "baseline_policy.txt", "clause_count": 42 },
+  "new_policy": { "filename": "revised_policy.txt", "clause_count": 48 },
+  "summary": {
+    "total_changes": 12,
+    "valid_changes": 9,
+    "invalid_changes": 3,
+    "privacy_impact_counts": {
+      "PRIVACY_WORSE": 4,
+      "PRIVACY_BETTER": 2,
+      "NO_PRIVACY_EFFECT": 2,
+      "UNCLEAR": 1
+    }
+  },
+  "changes": [
+    {
+      "change_id": "chg_00001",
+      "change_type": "MODIFIED",
+      "event_validity": "GENUINE_CHANGE",
+      "privacy_impact": "PRIVACY_WORSE",
+      "classification": {
+        "rationale": "Expanded third-party syndication without opt-out consent.",
+        "evidence": ["share telemetry with marketing partners"],
+        "confidence": 0.89
+      }
+    }
+  ]
 }
 ```
 
-Do not set the multipart `Content-Type` header manually; the browser adds the required boundary. Keep a loading state during comparison because model inference can take time, prevent accidental duplicate submits, and show retryable errors.
+---
 
-The response has `old_policy` and `new_policy` metadata, a `summary`, and a `changes` array. Each change provides:
-
-- `change_id`, `change_type`, `event_validity`, `is_valid`, and `validation_reason`.
-- `before`: the aligned event, including old/new clause text and similarity/change metrics.
-- `nli`, `privacy_features`, and `privacy_interpretation` supporting details (nullable when not applicable).
-- `classification`: impact label, confidence, rationale, evidence, facets, and rules used (nullable for invalid events).
-- `privacy_impact`: a convenient top level copy of the classification label.
-
-Use `summary.privacy_impact_counts` for the overview counts. Invalid events remain in `changes` so the frontend can explain why classification was skipped. Identical aligned clauses are omitted. The detailed contract and a complete example are in [`docs/api_handover.md`](docs/api_handover.md).
-
-### Current API boundaries
-
-The backend currently has no authentication, policy history, database persistence, separate upload endpoint, report export, or production deployment configuration. It accepts text based PDFs; scanned PDFs that require OCR are rejected as having no extractable text. CORS defaults to the two local frontend origins above and can be overridden with `SNEAKYTOS_CORS_ORIGINS`. There is no published production base URL.
-
-## Repository map
+## 📂 Repository Structure
 
 ```text
-src/sneakytos/
-  api.py                  FastAPI application and upload endpoint
-  analysis_pipeline.py    End to end validation and analysis orchestration
-  pipeline.py             Policy ingestion and segmentation workflow
-  ingestion/parser.py     TXT/PDF extraction and text normalization
-  segmentation/           Clause segmentation
-  alignment/              Semantic clause matching and change detection
-  validation/             Event quality checks
-  features/               Privacy feature extraction and interpretation
-  nli/                    NLI model wrapper
-  classification/          Rules based impact labels and explanations
-docs/
-  api_handover.md         Request, response, errors, and integration details
-data/
-  annotations/            Research annotation and alignment audit materials
-  processed/              Policy version and comparison research outputs
-notebooks/                Dataset exploration and baseline research
-scripts/                  Research data preparation and quality scripts
-test_data/                Small policy examples and regression fixtures
+SneakyToS/
+├── src/sneakytos/             # Core Backend NLP & API Engine
+│   ├── api.py                 # FastAPI application, CORS, and upload endpoints
+│   ├── analysis_pipeline.py   # Multi-stage comparison & classification orchestrator
+│   ├── pipeline.py            # Text extraction, normalization, and clause segmentation
+│   ├── ingestion/             # PyMuPDF parser and text sanitizers
+│   ├── segmentation/          # Clause-level boundary segmenter
+│   ├── alignment/             # Dense embedding clause aligner
+│   ├── validation/            # Event-authenticity and boilerplate filter
+│   ├── features/              # Privacy facet extraction (retention, sharing, tracking)
+│   ├── nli/                   # DeBERTa-v3 cross-encoder NLI wrapper
+│   └── classification/         # Rules-based privacy impact engine
+├── web/                       # Modern Frontend Web Application
+│   ├── src/
+│   │   ├── components/        # Reusable UI components, badges, layout
+│   │   ├── context/           # React Comparison Context & state management
+│   │   ├── pages/             # Workspace, Discrepancy Ledger, Audit Report
+│   │   ├── services/          # Axios API service layer and fallbacks
+│   │   └── utils/             # Section heading resolver & text utilities
+│   ├── package.json           # Frontend dependencies & build scripts
+│   └── vite.config.ts         # Vite build configuration
+├── docs/                      # Technical API handover & integration documents
+├── requirements-api.txt       # Production API dependencies
+├── requirements-dev.txt       # Development & PyTest dependencies
+└── README.md                  # Project overview and run guide
 ```
 
-## Research context
+---
 
-The research component investigates privacy policy evolution as a temporal semantic permission delta. The initial scope includes data collection, use, sharing, transfer, retention, user control, consent, security, and selected sensitive data categories. Notebooks, processed policy version data, annotations, and scripts support exploration and evaluation; they are not required to run the API.
+## 👥 Authors & Credits
 
-## Validation status and next work
+SneakyToS was designed, engineered, and developed by:
 
-The local regression suite currently passes 21 tests. TXT upload and a generated text based PDF were also exercised through the API locally. This does not establish production readiness, OCR support, broad real world PDF reliability, load capacity, or security readiness. Before deployment, configure origins and secrets for the target environment, add operational monitoring and request limits, run representative adversarial policy pairs, and evaluate the service under expected load.
+- **Arjun Haridas**
+- **Dany Binu Luke**
 
-For frontend work, start with the compare upload flow, summary counts, change explorer, and a detail view that displays before/after text, evidence, confidence, validation status, and `UNCLEAR` faithfully.
+---
+
+## 🤝 Collaboration & Inquiries
+
+We welcome feedback, suggestions, and research collaboration! Whether you are interested in:
+- Legal-tech applications and NLP research on automated contract analysis
+- Improving heuristic heading extraction for unstructured PDFs
+- Expanding multilingual and cross-jurisdictional privacy policy benchmarks
+- Contributing to the UI or fine-tuning specialized domain models
+
+Please feel free to connect, open an issue, or reach out to us:
+- **Arjun Haridas & Dany Binu Luke**
+- Contact directly via GitHub Issues or connect for future research and technical collaboration!
+
+---
+
+## ⚖️ Disclaimer
+
+*SneakyToS is an automated forensic analysis tool intended for research, informational, and transparency purposes. The classifications and explanations generated do not constitute formal legal advice.*

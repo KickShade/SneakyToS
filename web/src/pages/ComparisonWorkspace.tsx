@@ -1,9 +1,10 @@
 // ============================================================================
 // SneakyToS — Document Comparison Workspace
 // Source of Truth: Google Stitch Screen 47865f28f8c94ee49603b4deaebea2e1
+// Dynamic rendering connected to FastAPI backend output (CompareResponse)
 // ============================================================================
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Shield,
@@ -12,21 +13,30 @@ import {
   Link as LinkIcon,
   Unlink,
   CheckCircle2,
-  Sparkles,
   ArrowRight,
   FileDown,
+  ExternalLink,
+  UploadCloud,
+  SlidersHorizontal,
 } from 'lucide-react';
-import { mockDetailedComparison } from '@/services/mockData';
+import { useComparison } from '@/context/ComparisonContext';
+import {
+  ChangeTypeBadge,
+  EventValidityBadge,
+  PrivacyImpactBadge,
+} from '@/components/common/Badge';
+import {
+  createDocumentSectionContext,
+  resolveChangeCardHeading,
+} from '@/utils/sectionUtils';
 
 export function ComparisonWorkspace() {
   const navigate = useNavigate();
-  const comparison = mockDetailedComparison;
-  const changes = comparison.changes;
+  const { comparisonData } = useComparison();
 
-  const [selectedChangeId, setSelectedChangeId] = useState<string>('change-001');
+  const [selectedChangeId, setSelectedChangeId] = useState<string>('');
   const [syncScroll, setSyncScroll] = useState<boolean>(true);
-  const [viewMode, setViewMode] = useState<'split' | 'unified'>('split');
-  const [filterImpact, setFilterImpact] = useState<'all' | 'worse' | 'better' | 'unclear'>('all');
+  const [filterImpact, setFilterImpact] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Dual scroll container refs
@@ -34,16 +44,26 @@ export function ComparisonWorkspace() {
   const rightScrollRef = useRef<HTMLDivElement>(null);
   const isScrollingRef = useRef<'left' | 'right' | null>(null);
 
+  const changes = useMemo(() => comparisonData?.changes || [], [comparisonData]);
+
+  // Set default selected change id once data is loaded
+  useEffect(() => {
+    if (changes.length > 0 && (!selectedChangeId || !changes.some((c) => c.change_id === selectedChangeId))) {
+      setSelectedChangeId(changes[0].change_id);
+    }
+  }, [changes, selectedChangeId]);
+
   // Synchronized scrolling
   const handleLeftScroll = () => {
     if (!syncScroll || isScrollingRef.current === 'right') return;
     isScrollingRef.current = 'left';
     if (leftScrollRef.current && rightScrollRef.current) {
-      const percentage =
-        leftScrollRef.current.scrollTop /
-        (leftScrollRef.current.scrollHeight - leftScrollRef.current.clientHeight || 1);
-      rightScrollRef.current.scrollTop =
-        percentage * (rightScrollRef.current.scrollHeight - rightScrollRef.current.clientHeight);
+      const maxScrollLeft = leftScrollRef.current.scrollHeight - leftScrollRef.current.clientHeight;
+      const maxScrollRight = rightScrollRef.current.scrollHeight - rightScrollRef.current.clientHeight;
+      if (maxScrollLeft > 0 && maxScrollRight > 0) {
+        const percentage = leftScrollRef.current.scrollTop / maxScrollLeft;
+        rightScrollRef.current.scrollTop = percentage * maxScrollRight;
+      }
     }
     setTimeout(() => {
       isScrollingRef.current = null;
@@ -54,11 +74,12 @@ export function ComparisonWorkspace() {
     if (!syncScroll || isScrollingRef.current === 'left') return;
     isScrollingRef.current = 'right';
     if (leftScrollRef.current && rightScrollRef.current) {
-      const percentage =
-        rightScrollRef.current.scrollTop /
-        (rightScrollRef.current.scrollHeight - rightScrollRef.current.clientHeight || 1);
-      leftScrollRef.current.scrollTop =
-        percentage * (leftScrollRef.current.scrollHeight - leftScrollRef.current.clientHeight);
+      const maxScrollLeft = leftScrollRef.current.scrollHeight - leftScrollRef.current.clientHeight;
+      const maxScrollRight = rightScrollRef.current.scrollHeight - rightScrollRef.current.clientHeight;
+      if (maxScrollLeft > 0 && maxScrollRight > 0) {
+        const percentage = rightScrollRef.current.scrollTop / maxScrollRight;
+        leftScrollRef.current.scrollTop = percentage * maxScrollLeft;
+      }
     }
     setTimeout(() => {
       isScrollingRef.current = null;
@@ -67,6 +88,8 @@ export function ComparisonWorkspace() {
 
   // Scroll to selected change automatically
   useEffect(() => {
+    if (!selectedChangeId) return;
+
     const leftTarget = document.getElementById(`diff-left-${selectedChangeId}`);
     const rightTarget = document.getElementById(`diff-right-${selectedChangeId}`);
 
@@ -78,18 +101,105 @@ export function ComparisonWorkspace() {
     }
   }, [selectedChangeId]);
 
-  // Filtered change list
-  const filteredChanges = changes.filter((c) => {
-    if (filterImpact === 'worse' && c.privacyImpact !== 'PRIVACY_WORSE') return false;
-    if (filterImpact === 'better' && c.privacyImpact !== 'PRIVACY_BETTER') return false;
-    if (filterImpact === 'unclear' && c.privacyImpact !== 'UNCLEAR') return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const inText = (c.oldText + ' ' + c.newText + ' ' + c.explanation + ' ' + (c.sectionNew || '')).toLowerCase();
-      if (!inText.includes(q)) return false;
-    }
-    return true;
-  });
+  // Document section contexts (separate for baseline and revised documents)
+  const oldSectionContext = useMemo(
+    () => createDocumentSectionContext(changes, 'old'),
+    [changes]
+  );
+  const newSectionContext = useMemo(
+    () => createDocumentSectionContext(changes, 'new'),
+    [changes]
+  );
+
+  // Filtered change list for sidebar
+  const filteredChanges = useMemo(() => {
+    return changes.filter((c) => {
+      if (filterImpact === 'worse' && c.privacy_impact !== 'PRIVACY_WORSE') return false;
+      if (filterImpact === 'better' && c.privacy_impact !== 'PRIVACY_BETTER') return false;
+      if (filterImpact === 'no_effect' && c.privacy_impact !== 'NO_PRIVACY_EFFECT') return false;
+      if (filterImpact === 'unclear' && c.privacy_impact !== 'UNCLEAR') return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const oldT = c.before?.old_clause?.text || '';
+        const newT = c.before?.new_clause?.text || '';
+        const rationale = c.classification?.rationale || '';
+        const sectionHeading = resolveChangeCardHeading(c, oldSectionContext, newSectionContext);
+        const inText = `${oldT} ${newT} ${rationale} ${sectionHeading}`.toLowerCase();
+        if (!inText.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [changes, filterImpact, searchQuery, oldSectionContext, newSectionContext]);
+
+  const selectedChange = useMemo(
+    () => changes.find((c) => c.change_id === selectedChangeId),
+    [changes, selectedChangeId]
+  );
+
+  const handleExportJson = () => {
+    if (!comparisonData) return;
+    const dataStr =
+      'data:text/json;charset=utf-8,' +
+      encodeURIComponent(JSON.stringify(comparisonData, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute(
+      'download',
+      `sneakytos-comparison-${comparisonData.old_policy.filename}-vs-${comparisonData.new_policy.filename}.json`
+    );
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  };
+
+  // If no comparison data is available, show empty state
+  if (!comparisonData) {
+    return (
+      <div className="bg-background text-on-surface antialiased min-h-screen flex flex-col justify-between selection:bg-primary-container selection:text-on-primary-container">
+        <header className="h-14 w-full z-20 bg-surface-container-lowest border-b border-outline-variant px-5 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-on-surface font-semibold text-sm">
+            <Shield className="size-4 text-primary" />
+            <span>SneakyToS Workspace</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/')}
+            className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-semibold hover:brightness-110 cursor-pointer"
+          >
+            + Upload Policies
+          </button>
+        </header>
+
+        <div className="max-w-xl mx-auto my-auto p-8 rounded-2xl bg-surface-container border border-outline-variant text-center space-y-4 shadow-xl">
+          <div className="size-16 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center text-primary mx-auto">
+            <UploadCloud className="size-8" />
+          </div>
+          <h2 className="text-xl font-display font-semibold text-on-surface">
+            No Comparison Loaded
+          </h2>
+          <p className="text-xs text-on-surface-variant max-w-md mx-auto leading-relaxed">
+            Upload baseline and revised policy files on the homepage to perform neural clause alignment, event validity auditing, and privacy impact classification.
+          </p>
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-primary text-on-primary text-sm font-semibold hover:brightness-110 active:scale-[0.98] transition-all cursor-pointer shadow-lg"
+            >
+              <span>Go to Document Upload</span>
+              <ArrowRight className="size-4" />
+            </button>
+          </div>
+        </div>
+
+        <footer className="w-full bg-surface-container-lowest border-t border-outline-variant py-4 text-center text-xs text-outline">
+          SneakyToS · Privacy Policy Neural Diff Engine
+        </footer>
+      </div>
+    );
+  }
+
+  const { old_policy, new_policy, summary } = comparisonData;
 
   return (
     <div className="bg-background text-on-surface antialiased overflow-hidden h-screen flex flex-col selection:bg-primary-container selection:text-on-primary-container">
@@ -109,792 +219,435 @@ export function ComparisonWorkspace() {
               <span>Audits</span>
             </button>
             <span className="text-outline-variant/80">/</span>
-            <span className="hover:text-on-surface transition-colors">{comparison.companyName}</span>
+            <span className="hover:text-on-surface transition-colors truncate max-w-[140px] md:max-w-[200px]" title={old_policy.filename}>
+              {old_policy.filename}
+            </span>
+            <span className="text-outline-variant/80">vs</span>
+            <span className="hover:text-on-surface transition-colors truncate max-w-[140px] md:max-w-[200px]" title={new_policy.filename}>
+              {new_policy.filename}
+            </span>
             <span className="text-outline-variant/80">/</span>
-            <span className="text-on-surface font-semibold truncate max-w-xs md:max-w-sm flex items-center gap-1.5 text-primary">
-              v3.2 vs v4.0 Redline
+            <span className="text-primary font-semibold truncate flex items-center gap-1.5">
+              Redline Diff
             </span>
           </div>
 
           <div className="h-4 w-px bg-outline-variant/60 mx-1 hidden lg:block" />
 
-          {/* Live Status Capsule */}
-          <div className="hidden sm:inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-surface-container-high/90 border border-outline-variant shadow-sm">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-tertiary opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-tertiary" />
+          {/* Impact Quick Pills */}
+          <div className="hidden xl:flex items-center gap-2">
+            <span className="font-mono-badge text-[10.5px] px-2 py-0.5 rounded bg-surface-container border border-outline-variant text-outline">
+              Total: {summary.total_changes}
             </span>
-            <span className="font-mono-badge text-[10px] text-tertiary font-medium tracking-wide uppercase">
-              Audit Ready
+            <span className="font-mono-badge text-[10.5px] px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/30">
+              Worse: {summary.privacy_impact_counts.PRIVACY_WORSE}
             </span>
-            <span className="text-outline-variant text-[10px]">•</span>
-            <span className="font-mono-badge text-[10px] text-on-surface-variant">
-              {comparison.totalChanges} Discrepancies
+            <span className="font-mono-badge text-[10.5px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+              Better: {summary.privacy_impact_counts.PRIVACY_BETTER}
+            </span>
+            <span className="font-mono-badge text-[10.5px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">
+              Unclear: {summary.privacy_impact_counts.UNCLEAR}
             </span>
           </div>
         </div>
 
-        {/* Right: Search, Split View Toggle, Export, Close */}
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Search box */}
-          <div className="relative hidden xl:block">
-            <Search className="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-outline pointer-events-none" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search clause text (⌘K)..."
-              className="h-8 pl-8 pr-3 w-56 rounded-lg bg-surface-container border border-outline-variant text-on-surface placeholder:text-outline font-body text-xs focus:border-primary focus:outline-none transition-all shadow-inner"
-            />
-          </div>
-
-          {/* View Mode Segmented */}
-          <div className="hidden lg:flex items-center p-0.5 rounded-lg bg-surface-container border border-outline-variant text-xs">
+        {/* Right: Workspace Navigation & Export Actions */}
+        <div className="flex items-center gap-2 md:gap-3">
+          <nav className="flex items-center gap-1.5">
             <button
               type="button"
-              onClick={() => setViewMode('split')}
-              className={`px-2.5 py-1 rounded flex items-center gap-1 text-[11px] transition-colors ${
-                viewMode === 'split'
-                  ? 'bg-surface-container-highest text-primary font-medium shadow-sm'
-                  : 'text-on-surface-variant hover:text-on-surface'
-              }`}
+              className="px-2.5 py-1 rounded bg-primary/20 text-primary border border-primary/40 text-xs font-semibold"
             >
-              <span>Split View</span>
+              Workspace
             </button>
             <button
               type="button"
-              onClick={() => setViewMode('unified')}
-              className={`px-2.5 py-1 rounded flex items-center gap-1 text-[11px] transition-colors ${
-                viewMode === 'unified'
-                  ? 'bg-surface-container-highest text-primary font-medium shadow-sm'
-                  : 'text-on-surface-variant hover:text-on-surface'
-              }`}
+              onClick={() => navigate('/changes')}
+              className="px-2.5 py-1 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container text-xs transition-colors cursor-pointer"
             >
-              <span>Unified</span>
+              Ledger ({changes.length})
             </button>
-          </div>
+            <button
+              type="button"
+              onClick={() => navigate('/report')}
+              className="px-2.5 py-1 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container text-xs transition-colors cursor-pointer"
+            >
+              Report
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="px-2.5 py-1 rounded text-outline hover:text-on-surface hover:bg-surface-container text-xs transition-colors cursor-pointer"
+            >
+              + Upload
+            </button>
+          </nav>
 
-          <div className="h-4 w-px bg-outline-variant/60 mx-0.5 hidden sm:block" />
-
-          {/* Export Button */}
           <button
             type="button"
-            onClick={() => navigate(`/comparison/${comparison.id}/privacy-report`)}
-            className="h-8 px-2.5 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant text-on-surface font-body text-xs flex items-center gap-1.5 transition-all shadow-sm active:scale-[0.98] cursor-pointer"
+            onClick={handleExportJson}
+            className="p-1.5 rounded-lg border border-outline-variant bg-surface-container hover:bg-surface-container-high text-on-surface transition-colors cursor-pointer"
+            title="Export Comparison JSON"
           >
-            <FileDown className="size-3.5 text-primary" />
-            <span>Export Audit</span>
-            <span className="font-mono-badge text-[9.5px] text-primary px-1 py-0.2 rounded bg-primary/10 border border-primary/25 font-semibold">
-              PDF
-            </span>
-          </button>
-
-          {/* Close button */}
-          <button
-            type="button"
-            onClick={() => navigate('/')}
-            className="h-8 w-8 rounded-lg border border-outline-variant bg-surface-container hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface flex items-center justify-center transition-all cursor-pointer"
-            title="Return to Homepage"
-          >
-            <X className="size-4" />
+            <FileDown className="size-4" />
           </button>
         </div>
       </header>
 
       {/* ─────────────────────────────────────────────────────────────
-          2. Three-Part Centerpiece Workspace (Stitch Columns)
+          2. Main Comparison Split View (Left: Old, Center: New, Right: Ledger)
          ───────────────────────────────────────────────────────────── */}
-      <main className="flex-1 flex overflow-hidden w-full relative">
-        {viewMode === 'split' ? (
-          <>
-            {/* ── COLUMN 1 (40% width): ORIGINAL POLICY (OLD) ── */}
-            <section className="w-[40%] flex flex-col border-r border-outline-variant bg-surface-container-lowest/60 relative">
-              {/* Sub-Header */}
-              <div className="h-10 px-4 bg-surface-container-low border-b border-outline-variant flex items-center justify-between shrink-0 select-none">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="size-2 rounded-full bg-error ring-2 ring-error/20 shrink-0" />
-                  <span className="font-mono-badge text-[10px] uppercase tracking-wider text-error font-bold px-1 py-0.2 rounded bg-error-container/20 border border-error/30 shrink-0">
-                    ORIGINAL (OLD)
-                  </span>
-                  <span className="text-outline-variant/60">|</span>
-                  <div className="flex items-center gap-1.5 truncate text-xs">
-                    <span className="font-body text-on-surface font-semibold truncate">
-                      OmniCloud Terms v3.2
-                    </span>
-                    <span className="text-on-surface-variant font-mono-badge text-[10.5px] px-1.5 py-0.2 rounded bg-surface-container-highest border border-outline-variant/60">
-                      14 Nov 2023
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 text-xs shrink-0">
-                  <div className="flex items-center gap-1 bg-surface-container-highest/80 rounded px-1.5 py-0.5 border border-outline-variant shadow-sm text-outline">
-                    <span className="font-mono-code text-[10.5px]">P. 04 / 18</span>
-                  </div>
-                  {/* Synchronized Scroll Lock Button */}
-                  <button
-                    type="button"
-                    onClick={() => setSyncScroll(!syncScroll)}
-                    className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10.5px] border transition-all shadow-sm cursor-pointer ${
-                      syncScroll
-                        ? 'bg-primary/10 border-primary/30 text-primary hover:bg-primary/20'
-                        : 'bg-surface-container border-outline-variant text-outline'
-                    }`}
-                    title={syncScroll ? 'Synchronized Scrolling Locked' : 'Synchronized Scrolling Off'}
-                  >
-                    {syncScroll ? <LinkIcon className="size-3" /> : <Unlink className="size-3" />}
-                    <span className="font-mono-badge text-[9.5px] font-semibold tracking-wide">
-                      {syncScroll ? 'LOCKED' : 'OFF'}
-                    </span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Original Document Content Pane */}
-              <div
-                ref={leftScrollRef}
-                onScroll={handleLeftScroll}
-                className="flex-1 overflow-y-auto custom-scroll p-4 space-y-5 text-on-surface bg-background/50"
-              >
-                {/* Clause Item: Section 4.2 */}
-                <article
-                  id="diff-left-change-001"
-                  onClick={() => setSelectedChangeId('change-001')}
-                  className={`relative pl-8 pt-1 rounded-lg p-2.5 transition-all border cursor-pointer ${
-                    selectedChangeId === 'change-001'
-                      ? 'border-error/80 bg-error-container/10 ring-1 ring-error/40'
-                      : 'border-transparent hover:border-outline-variant/40 hover:bg-surface-container/30'
-                  }`}
-                >
-                  <span className="absolute left-1.5 top-2.5 font-mono-badge text-[10px] text-error bg-error-container/30 font-semibold px-1.5 py-0.5 rounded border border-error/50 shadow-sm">
-                    #001
-                  </span>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <h3 className="text-xs font-semibold text-on-surface flex items-center gap-1.5">
-                      <span>Section 4.2</span>
-                      <span className="text-outline-variant">·</span>
-                      <span className="text-on-surface-variant font-normal">
-                        Third-Party Data Disclosures & Behavioral Syndication
-                      </span>
-                    </h3>
-                    <span className="font-mono-gutter text-[10.5px] text-outline bg-surface-container px-1 py-0.2 rounded border border-outline-variant/60">
-                      LN 248–261
-                    </span>
-                  </div>
-                  <p className="font-clause-diff text-[13px] text-on-surface-variant leading-relaxed">
-                    In the course of providing real-time infrastructure metrics and cloud analytics services, OmniCloud may collect edge diagnostic signals, machine telemetry, and authenticated workspace identifiers.
-                  </p>
-                  {/* Deleted Clause Highlight */}
-                  <div className="mt-2.5 p-3 rounded-md bg-error-container/15 border-l-[3px] border-error text-error font-clause-diff text-[13px] leading-relaxed relative border border-error/25 shadow-sm">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-mono-badge text-[9px] uppercase tracking-wider text-error bg-error-container/40 px-1.5 py-0.5 rounded font-bold border border-error/40">
-                        REMOVED IN V4.0
-                      </span>
-                      <span className="font-mono-badge text-[9px] text-error/70 font-mono-code">
-                        Strict Opt-In Safeguard
-                      </span>
-                    </div>
-                    <del className="line-through decoration-error text-error/95 block font-normal">
-                      "We will not sell, rent, or distribute your personal usage data to third-party marketing entities without explicit opt-in user consent and verified corporate cryptographic key approval."
-                    </del>
-                  </div>
-                  <p className="mt-2.5 font-clause-diff text-[13px] text-on-surface-variant leading-relaxed">
-                    Such access is strictly governed by zero-trust identity envelopes and logged under audited access records retained for standard compliance cycles.
-                  </p>
-                </article>
-
-                <hr className="border-outline-variant/40 my-3" />
-
-                {/* Clause Item: Section 7.3 */}
-                <article
-                  id="diff-left-change-004"
-                  onClick={() => setSelectedChangeId('change-004')}
-                  className={`relative pl-8 pt-1 rounded-lg p-2.5 transition-all border cursor-pointer ${
-                    selectedChangeId === 'change-004'
-                      ? 'border-amber-400/80 bg-amber-950/20 ring-1 ring-amber-400/40'
-                      : 'border-transparent hover:border-outline-variant/40 hover:bg-surface-container/30'
-                  }`}
-                >
-                  <span className="absolute left-1.5 top-2.5 font-mono-badge text-[10px] text-amber-400 bg-amber-950/40 font-semibold px-1.5 py-0.5 rounded border border-amber-500/50 shadow-sm">
-                    #004
-                  </span>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <h3 className="text-xs font-semibold text-on-surface flex items-center gap-1.5">
-                      <span>Section 7.3</span>
-                      <span className="text-outline-variant">·</span>
-                      <span className="text-on-surface-variant font-normal">
-                        Data Retention & Log Maintenance Protocols
-                      </span>
-                    </h3>
-                    <span className="font-mono-gutter text-[10.5px] text-outline bg-surface-container px-1 py-0.2 rounded border border-outline-variant/60">
-                      LN 312–329
-                    </span>
-                  </div>
-                  <p className="font-clause-diff text-[13px] text-on-surface-variant leading-relaxed">
-                    Aggregated ingress payloads, cluster activity ledgers, and API transactional histories are persisted within isolated storage nodes according to deterministic retention timetables.
-                  </p>
-                  {/* Superseded Phrasing */}
-                  <div className="mt-2.5 p-3 rounded-md bg-amber-950/20 border-l-[3px] border-amber-400 text-amber-200 font-clause-diff text-[13px] leading-relaxed border border-amber-500/30 shadow-sm">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-mono-badge text-[9px] uppercase tracking-wider text-amber-400 bg-amber-950/50 px-1.5 py-0.5 rounded font-bold border border-amber-400/40">
-                        SUPERSEDED PHRASING
-                      </span>
-                      <span className="font-mono-badge text-[9px] text-amber-300/70 font-mono-code">
-                        90-Day Fixed Window
-                      </span>
-                    </div>
-                    <span className="line-through decoration-amber-400/80 text-amber-200/90 block">
-                      "All customer operational raw telemetry and authentication breadcrumbs shall be definitively expunged within an immutable ninety (90) calendar day rollover cycle."
-                    </span>
-                  </div>
-                </article>
-
-                <hr className="border-outline-variant/40 my-3" />
-
-                {/* Clause Item: Section 9.1 */}
-                <article
-                  id="diff-left-change-002"
-                  onClick={() => setSelectedChangeId('change-002')}
-                  className={`relative pl-8 pt-1 rounded-lg p-2.5 transition-all border cursor-pointer ${
-                    selectedChangeId === 'change-002'
-                      ? 'border-error/80 bg-error-container/10 ring-1 ring-error/40'
-                      : 'border-transparent hover:border-outline-variant/40 hover:bg-surface-container/30'
-                  }`}
-                >
-                  <span className="absolute left-1.5 top-2.5 font-mono-badge text-[10px] text-error bg-error-container/30 font-semibold px-1.5 py-0.5 rounded border border-error/50 shadow-sm">
-                    #002
-                  </span>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <h3 className="text-xs font-semibold text-on-surface flex items-center gap-1.5">
-                      <span>Section 9.1</span>
-                      <span className="text-outline-variant">·</span>
-                      <span className="text-on-surface-variant font-normal">
-                        User Rights, Subject Access, and System Erasure
-                      </span>
-                    </h3>
-                    <span className="font-mono-gutter text-[10.5px] text-outline bg-surface-container px-1 py-0.2 rounded border border-outline-variant/60">
-                      LN 402–418
-                    </span>
-                  </div>
-                  <p className="font-clause-diff text-[13px] text-on-surface-variant leading-relaxed">
-                    Authorized tenant administrators retain statutory prerogatives to trigger Article 17 GDPR erasure directives across production databases.
-                  </p>
-                  <div className="mt-2.5 p-3 rounded-md bg-error-container/15 border-l-[3px] border-error text-error/95 font-clause-diff text-[13px] leading-relaxed border border-error/25 shadow-sm">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-mono-badge text-[9px] uppercase tracking-wider text-error bg-error-container/40 px-1.5 py-0.5 rounded font-bold border border-error/40">
-                        FORMER UNCONDITIONAL PURGE
-                      </span>
-                      <span className="font-mono-badge text-[9px] text-error/70 font-mono-code">
-                        GDPR Full Compliance
-                      </span>
-                    </div>
-                    <span className="line-through decoration-error/70 text-error/90 block">
-                      "Upon verified receipt of an erasure demand, OmniCloud executes complete algorithmic purging across both primary persistent stores and derived analytical indices without persistent residual trace."
-                    </span>
-                  </div>
-                </article>
-
-                <hr className="border-outline-variant/40 my-3" />
-
-                {/* Clause Item: Section 12.4 */}
-                <article
-                  id="diff-left-change-003"
-                  onClick={() => setSelectedChangeId('change-003')}
-                  className="relative pl-8 pt-1 rounded-lg p-2.5 transition-all border border-transparent hover:border-outline-variant/40"
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <h3 className="text-xs font-semibold text-on-surface flex items-center gap-1.5">
-                      <span>Section 12.4</span>
-                      <span className="text-outline-variant">·</span>
-                      <span className="text-on-surface-variant font-normal">
-                        Hardware Identifiers and Perceptual Metrics
-                      </span>
-                    </h3>
-                    <span className="font-mono-gutter text-[10.5px] text-outline bg-surface-container px-1 py-0.2 rounded border border-outline-variant/60">
-                      LN 580–592
-                    </span>
-                  </div>
-                  <p className="font-clause-diff text-[13px] text-on-surface-variant leading-relaxed">
-                    Workstation agents monitor CPU core thermal metrics, RAM saturation, and thread scheduling latencies to allocate dynamic edge routing shards safely.
-                  </p>
-                  <div className="mt-2.5 p-2.5 rounded-md bg-surface-container-highest/40 border border-dashed border-outline-variant text-on-surface-variant/80 font-mono-code text-[11px]">
-                    No biometric exclusion clause existed in v3.2. Explicit clause introduced in v4.0 (Ref #003).
-                  </div>
-                </article>
-              </div>
-            </section>
-
-            {/* ── COLUMN 2 (40% width): REVISED POLICY (NEW) ── */}
-            <section className="w-[40%] flex flex-col border-r border-outline-variant bg-surface-container-lowest/60 relative">
-              {/* Sub-Header */}
-              <div className="h-10 px-4 bg-surface-container-low border-b border-outline-variant flex items-center justify-between shrink-0 select-none">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="size-2 rounded-full bg-tertiary ring-2 ring-tertiary/20 shrink-0" />
-                  <span className="font-mono-badge text-[10px] uppercase tracking-wider text-tertiary font-bold px-1 py-0.2 rounded bg-tertiary-container/20 border border-tertiary/30 shrink-0">
-                    REVISED (NEW)
-                  </span>
-                  <span className="text-outline-variant/60">|</span>
-                  <div className="flex items-center gap-1.5 truncate text-xs">
-                    <span className="font-body text-on-surface font-semibold truncate">
-                      OmniCloud Terms v4.0
-                    </span>
-                    <span className="text-on-surface-variant font-mono-badge text-[10.5px] px-1.5 py-0.2 rounded bg-surface-container-highest border border-outline-variant/60">
-                      15 Jan 2025
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 text-xs shrink-0">
-                  <div className="flex items-center gap-1 bg-surface-container-highest/80 rounded px-1.5 py-0.5 border border-outline-variant shadow-sm text-outline">
-                    <span className="font-mono-code text-[10.5px]">P. 04 / 18</span>
-                  </div>
-                  {/* Accuracy Badge */}
-                  <span className="px-2 py-0.5 rounded text-[10px] bg-tertiary-container/15 text-tertiary font-mono-badge font-semibold border border-tertiary/30 flex items-center gap-1 shadow-sm">
-                    <CheckCircle2 className="size-3" />
-                    <span>Aligned: 99.4%</span>
-                  </span>
-                </div>
-              </div>
-
-              {/* Revised Document Content Pane */}
-              <div
-                ref={rightScrollRef}
-                onScroll={handleRightScroll}
-                className="flex-1 overflow-y-auto custom-scroll p-4 space-y-5 text-on-surface bg-background/50"
-              >
-                {/* Clause Item: Section 4.2 */}
-                <article
-                  id="diff-right-change-001"
-                  onClick={() => setSelectedChangeId('change-001')}
-                  className={`relative pl-8 pt-1 rounded-lg p-2.5 transition-all border cursor-pointer ${
-                    selectedChangeId === 'change-001'
-                      ? 'border-error/80 bg-error-container/10 ring-1 ring-error/40'
-                      : 'border-transparent hover:border-outline-variant/40 hover:bg-surface-container/30'
-                  }`}
-                >
-                  <span className="absolute left-1.5 top-2.5 font-mono-badge text-[10px] text-error bg-error-container/30 font-semibold px-1.5 py-0.5 rounded border border-error/50 shadow-sm">
-                    #001
-                  </span>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <h3 className="text-xs font-semibold text-on-surface flex items-center gap-1.5">
-                      <span>Section 4.2</span>
-                      <span className="text-outline-variant">·</span>
-                      <span className="text-on-surface-variant font-normal">
-                        Third-Party Data Disclosures & Behavioral Syndication
-                      </span>
-                    </h3>
-                    <span className="font-mono-gutter text-[10.5px] text-outline bg-surface-container px-1 py-0.2 rounded border border-outline-variant/60">
-                      LN 248–266
-                    </span>
-                  </div>
-                  <p className="font-clause-diff text-[13px] text-on-surface-variant leading-relaxed">
-                    In the course of providing real-time infrastructure metrics and cloud analytics services, OmniCloud may collect edge diagnostic signals, machine telemetry, and authenticated workspace identifiers.
-                  </p>
-                  {/* Added Weakened Clause Highlight */}
-                  <div className="mt-2.5 p-3 rounded-md bg-tertiary-container/15 border-l-[3px] border-tertiary text-on-surface font-clause-diff text-[13px] leading-relaxed relative border border-tertiary/25 shadow-sm">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-mono-badge text-[9px] uppercase tracking-wider text-tertiary bg-tertiary-container/30 px-1.5 py-0.5 rounded font-bold border border-tertiary/30">
-                        NEW PROVISION IN V4.0
-                      </span>
-                      <span className="font-mono-badge text-[9px] text-error font-mono-code font-semibold">
-                        Ad Syndicate Expansion
-                      </span>
-                    </div>
-                    <span className="bg-tertiary/15 text-white font-medium underline decoration-tertiary/60 block px-1 py-0.5 rounded">
-                      "We may share pseudonymized behavioral telemetry and device fingerprints with authorized advertising partners to optimize targeted brand delivery, unless prohibited by applicable local jurisdiction."
-                    </span>
-                  </div>
-                  <p className="mt-2.5 font-clause-diff text-[13px] text-on-surface-variant leading-relaxed">
-                    Such access is strictly governed by zero-trust identity envelopes and logged under audited access records retained for standard compliance cycles.
-                  </p>
-                </article>
-
-                <hr className="border-outline-variant/40 my-3" />
-
-                {/* Clause Item: Section 7.3 */}
-                <article
-                  id="diff-right-change-004"
-                  onClick={() => setSelectedChangeId('change-004')}
-                  className={`relative pl-8 pt-1 rounded-lg p-2.5 transition-all border cursor-pointer ${
-                    selectedChangeId === 'change-004'
-                      ? 'border-amber-400/80 bg-amber-950/20 ring-1 ring-amber-400/40'
-                      : 'border-transparent hover:border-outline-variant/40 hover:bg-surface-container/30'
-                  }`}
-                >
-                  <span className="absolute left-1.5 top-2.5 font-mono-badge text-[10px] text-amber-400 bg-amber-950/40 font-semibold px-1.5 py-0.5 rounded border border-amber-500/50 shadow-sm">
-                    #004
-                  </span>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <h3 className="text-xs font-semibold text-on-surface flex items-center gap-1.5">
-                      <span>Section 7.3</span>
-                      <span className="text-outline-variant">·</span>
-                      <span className="text-on-surface-variant font-normal">
-                        Data Retention & Log Maintenance Protocols
-                      </span>
-                    </h3>
-                    <span className="font-mono-gutter text-[10.5px] text-outline bg-surface-container px-1 py-0.2 rounded border border-outline-variant/60">
-                      LN 318–334
-                    </span>
-                  </div>
-                  <p className="font-clause-diff text-[13px] text-on-surface-variant leading-relaxed">
-                    Aggregated ingress payloads, cluster activity ledgers, and API transactional histories are persisted within isolated storage nodes according to deterministic retention timetables.
-                  </p>
-                  {/* Revised Ambiguous Phrasing */}
-                  <div className="mt-2.5 p-3 rounded-md bg-amber-950/20 border-l-[3px] border-amber-400 text-amber-200 font-clause-diff text-[13px] leading-relaxed border border-amber-500/30 shadow-sm">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-mono-badge text-[9px] uppercase tracking-wider text-amber-400 bg-amber-950/50 px-1.5 py-0.5 rounded font-bold border border-amber-400/40">
-                        REWORDED CLAUSE
-                      </span>
-                      <span className="font-mono-badge text-[9px] text-amber-300 font-mono-code">
-                        Subjective Retention
-                      </span>
-                    </div>
-                    <span className="bg-amber-500/10 px-1 py-0.5 rounded text-amber-200 font-medium block">
-                      "Customer operational telemetry and access records are maintained for as long as deemed commercially reasonable and necessary to sustain analytical diagnostic pipelines."
-                    </span>
-                  </div>
-                </article>
-
-                <hr className="border-outline-variant/40 my-3" />
-
-                {/* Clause Item: Section 9.1 */}
-                <article
-                  id="diff-right-change-002"
-                  onClick={() => setSelectedChangeId('change-002')}
-                  className={`relative pl-8 pt-1 rounded-lg p-2.5 transition-all border cursor-pointer ${
-                    selectedChangeId === 'change-002'
-                      ? 'border-error/80 bg-error-container/10 ring-1 ring-error/40'
-                      : 'border-transparent hover:border-outline-variant/40 hover:bg-surface-container/30'
-                  }`}
-                >
-                  <span className="absolute left-1.5 top-2.5 font-mono-badge text-[10px] text-error bg-error-container/30 font-semibold px-1.5 py-0.5 rounded border border-error/50 shadow-sm">
-                    #002
-                  </span>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <h3 className="text-xs font-semibold text-on-surface flex items-center gap-1.5">
-                      <span>Section 9.1</span>
-                      <span className="text-outline-variant">·</span>
-                      <span className="text-on-surface-variant font-normal">
-                        User Rights, Subject Access, and System Erasure
-                      </span>
-                    </h3>
-                    <span className="font-mono-gutter text-[10.5px] text-outline bg-surface-container px-1 py-0.2 rounded border border-outline-variant/60">
-                      LN 408–430
-                    </span>
-                  </div>
-                  <p className="font-clause-diff text-[13px] text-on-surface-variant leading-relaxed">
-                    Authorized tenant administrators retain statutory prerogatives to trigger Article 17 GDPR erasure directives across production databases.
-                  </p>
-                  <div className="mt-2.5 p-3 rounded-md bg-error-container/20 border-l-[3px] border-error text-error/95 font-clause-diff text-[13px] leading-relaxed border border-error/30 shadow-sm">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-mono-badge text-[9px] uppercase tracking-wider text-error bg-error-container/40 px-1.5 py-0.5 rounded font-bold border border-error/40">
-                        RETENTION CARVE-OUT
-                      </span>
-                      <span className="font-mono-badge text-[9px] text-error font-mono-code font-bold">
-                        Perpetual AI Weight Retention
-                      </span>
-                    </div>
-                    <span className="block">
-                      "Erasure workflows target user identifiers within relational tables; however,{' '}
-                      <span className="bg-error/25 text-white font-medium underline decoration-error px-1 py-0.2 rounded">
-                        aggregate analytical embeddings and model training weights derived from prior historical sessions remain perpetually retained
-                      </span>{' '}
-                      to safeguard foundational neural baseline integrity."
-                    </span>
-                  </div>
-                </article>
-
-                <hr className="border-outline-variant/40 my-3" />
-
-                {/* Clause Item: Section 12.4 */}
-                <article
-                  id="diff-right-change-003"
-                  onClick={() => setSelectedChangeId('change-003')}
-                  className={`relative pl-8 pt-1 rounded-lg p-2.5 transition-all border cursor-pointer ${
-                    selectedChangeId === 'change-003'
-                      ? 'border-tertiary/80 bg-tertiary-container/10 ring-1 ring-tertiary/40'
-                      : 'border-transparent hover:border-outline-variant/40 hover:bg-surface-container/30'
-                  }`}
-                >
-                  <span className="absolute left-1.5 top-2.5 font-mono-badge text-[10px] text-tertiary bg-tertiary-container/30 font-semibold px-1.5 py-0.5 rounded border border-tertiary/50 shadow-sm">
-                    #003
-                  </span>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <h3 className="text-xs font-semibold text-on-surface flex items-center gap-1.5">
-                      <span>Section 12.4</span>
-                      <span className="text-outline-variant">·</span>
-                      <span className="text-on-surface-variant font-normal">
-                        Hardware Identifiers and Perceptual Metrics
-                      </span>
-                    </h3>
-                    <span className="font-mono-gutter text-[10.5px] text-outline bg-surface-container px-1 py-0.2 rounded border border-outline-variant/60">
-                      LN 595–612
-                    </span>
-                  </div>
-                  <p className="font-clause-diff text-[13px] text-on-surface-variant leading-relaxed">
-                    Workstation agents monitor CPU core thermal metrics, RAM saturation, and thread scheduling latencies to allocate dynamic edge routing shards safely.
-                  </p>
-                  <div className="mt-2.5 p-3 rounded-md bg-tertiary-container/20 border-l-[3px] border-tertiary text-tertiary font-clause-diff text-[13px] leading-relaxed border border-tertiary/30 shadow-sm">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-mono-badge text-[9px] uppercase tracking-wider text-tertiary bg-tertiary-container/40 px-1.5 py-0.5 rounded font-bold border border-tertiary/40">
-                        PRO-PRIVACY CLAUSE
-                      </span>
-                      <span className="font-mono-badge text-[9px] text-tertiary font-mono-code font-bold">
-                        Biometrics Explicitly Disclaimed
-                      </span>
-                    </div>
-                    <span className="text-on-surface font-medium block">
-                      "OmniCloud explicitly disclaims the harvesting, extraction, storage, or algorithmic derivation of any human facial geometry, retinal scans, acoustic voiceprints, or biometric signatures under any circumstance."
-                    </span>
-                  </div>
-                </article>
-              </div>
-            </section>
-          </>
-        ) : (
-          /* Unified Stream View */
-          <div className="flex-1 overflow-y-auto custom-scroll p-6 space-y-4 max-w-4xl mx-auto">
-            <div className="text-xs font-mono-badge text-outline flex items-center justify-between pb-2 border-b border-outline-variant">
-              <span>Unified Redline Sequence</span>
-              <span className="text-primary">{changes.length} Discrepancies</span>
-            </div>
-            {changes.map((c) => (
-              <div
-                key={c.id}
-                onClick={() => setSelectedChangeId(c.id)}
-                className={`p-4 rounded-xl border cursor-pointer transition-all ${
-                  selectedChangeId === c.id
-                    ? 'bg-surface-container border-primary ring-1 ring-primary/40'
-                    : 'bg-surface-container-low border-outline-variant hover:border-outline'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-semibold text-xs text-on-surface">
-                    #{c.id.toUpperCase()} · {c.sectionNew || c.sectionOld}
-                  </span>
-                  <span
-                    className={`font-mono-badge text-[10px] uppercase font-bold px-2 py-0.5 rounded border ${
-                      c.privacyImpact === 'PRIVACY_WORSE'
-                        ? 'text-error bg-error-container/20 border-error/40'
-                        : c.privacyImpact === 'PRIVACY_BETTER'
-                        ? 'text-tertiary bg-tertiary-container/20 border-tertiary/40'
-                        : 'text-amber-400 bg-amber-950/30 border-amber-500/40'
-                    }`}
-                  >
-                    {c.privacyImpact}
-                  </span>
-                </div>
-                {c.oldText && (
-                  <del className="block text-xs font-mono-code bg-error-container/15 text-error p-2.5 rounded border border-error/30 mb-2 line-through">
-                    - {c.oldText}
-                  </del>
-                )}
-                {c.newText && (
-                  <ins className="block text-xs font-mono-code bg-tertiary-container/15 text-tertiary p-2.5 rounded border border-tertiary/30 no-underline font-medium">
-                    + {c.newText}
-                  </ins>
-                )}
-                <p className="text-xs text-on-surface-variant mt-2">{c.explanation}</p>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* ── COLUMN 3 (20% width): DIFFERENCE SUMMARY SIDEBAR (Stitch Ledger) ── */}
-        <aside className="w-[20%] flex flex-col bg-surface-container-low border-l border-outline-variant h-full overflow-hidden select-none">
-          {/* Header & Metrics Badges */}
-          <div className="p-3 border-b border-outline-variant bg-surface-container-lowest/90 shrink-0">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-body font-semibold text-on-surface">
-                  Discrepancy Ledger
+      <main className="flex-1 flex overflow-hidden">
+        {/* Document Comparison Section (80% on desktop, 100% on mobile) */}
+        <div className="flex-1 flex flex-col md:flex-row overflow-hidden border-r border-outline-variant">
+          {/* ── LEFT PANE: BASELINE POLICY (OLD) ── */}
+          <section className="flex-1 flex flex-col border-b md:border-b-0 md:border-r border-outline-variant bg-surface-container-lowest relative overflow-hidden">
+            {/* Sub-Header */}
+            <div className="h-10 px-4 bg-surface-container-low border-b border-outline-variant flex items-center justify-between shrink-0 select-none">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="size-2 rounded-full bg-red-400 ring-2 ring-red-400/20 shrink-0" />
+                <span className="font-mono-badge text-[10px] uppercase tracking-wider text-red-400 font-bold px-1 py-0.2 rounded bg-red-500/10 border border-red-500/20 shrink-0">
+                  BASELINE (OLD)
+                </span>
+                <span className="text-outline-variant/60">|</span>
+                <span className="font-body text-on-surface font-semibold text-xs truncate max-w-[200px]" title={old_policy.filename}>
+                  {old_policy.filename}
                 </span>
               </div>
-              <span className="font-mono-badge text-[10px] text-primary bg-primary/10 border border-primary/25 px-1.5 py-0.5 rounded font-bold">
-                14 Events
+
+              <div className="flex items-center gap-2 text-xs shrink-0">
+                <span className="font-mono-badge text-[10.5px] text-outline px-1.5 py-0.2 rounded bg-surface-container">
+                  {old_policy.clause_count} Clauses · {old_policy.word_count} Words
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSyncScroll(!syncScroll)}
+                  className={`px-1.5 py-0.5 rounded border flex items-center gap-1 cursor-pointer transition-colors ${
+                    syncScroll
+                      ? 'bg-primary/10 border-primary/30 text-primary'
+                      : 'bg-surface-container border-outline-variant text-outline'
+                  }`}
+                  title={syncScroll ? 'Lock Synchronized Scrolling' : 'Unlock Scrolling'}
+                >
+                  {syncScroll ? <LinkIcon className="size-3" /> : <Unlink className="size-3" />}
+                  <span className="font-mono-badge text-[9.5px] font-semibold">
+                    {syncScroll ? 'SYNC ON' : 'SYNC OFF'}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {/* Left Content Pane */}
+            <div
+              ref={leftScrollRef}
+              onScroll={handleLeftScroll}
+              className="flex-1 overflow-y-auto custom-scroll p-4 space-y-4 text-on-surface bg-background/50"
+            >
+              {changes.map((change, index) => {
+                const isSelected = change.change_id === selectedChangeId;
+                const oldClause = change.before?.old_clause;
+                const oldClauses = change.before?.old_clauses || (oldClause ? [oldClause] : []);
+                const oldSectionTitle = oldSectionContext.getEnclosingSection(oldClause, oldClauses);
+
+                return (
+                  <article
+                    key={`left-${change.change_id}`}
+                    id={`diff-left-${change.change_id}`}
+                    onClick={() => setSelectedChangeId(change.change_id)}
+                    className={`relative rounded-xl p-3.5 transition-all border cursor-pointer ${
+                      isSelected
+                        ? 'border-primary bg-primary/10 ring-1 ring-primary/40 shadow-md'
+                        : 'border-outline-variant/40 hover:border-outline-variant hover:bg-surface-container/30'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono-badge text-[10px] text-outline bg-surface-container px-1.5 py-0.5 rounded border border-outline-variant">
+                          #{index + 1} ({change.change_id})
+                        </span>
+                        <h4
+                          className="text-xs font-semibold text-on-surface truncate max-w-[220px]"
+                          title={oldSectionTitle}
+                        >
+                          {oldSectionTitle}
+                        </h4>
+                      </div>
+                      <span className="font-mono-badge text-[10px] text-outline">
+                        Pos #{oldClause?.position ?? 'N/A'}
+                      </span>
+                    </div>
+
+                    {oldClauses.length > 0 ? (
+                      <div className="space-y-2">
+                        {oldClauses.map((c, i) => (
+                          <div
+                            key={i}
+                            className={`p-2.5 rounded-lg text-xs leading-relaxed font-clause-diff ${
+                              change.change_type === 'DELETED'
+                                ? 'bg-red-950/20 border-l-[3px] border-red-500 text-red-200'
+                                : change.change_type === 'MODIFIED'
+                                ? 'bg-amber-950/15 border-l-[3px] border-amber-500 text-amber-200'
+                                : 'bg-surface-container text-on-surface-variant'
+                            }`}
+                          >
+                            <p className={change.change_type === 'DELETED' ? 'line-through opacity-90' : ''}>
+                              {c.text}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="p-3 rounded-lg bg-surface-container/40 border border-dashed border-outline-variant text-outline font-mono-code text-[11px] italic">
+                        [No clause counterpart in baseline document — newly added in revision]
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* ── RIGHT PANE: REVISED POLICY (NEW) ── */}
+          <section className="flex-1 flex flex-col bg-surface-container-lowest/60 relative overflow-hidden">
+            {/* Sub-Header */}
+            <div className="h-10 px-4 bg-surface-container-low border-b border-outline-variant flex items-center justify-between shrink-0 select-none">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="size-2 rounded-full bg-blue-400 ring-2 ring-blue-400/20 shrink-0" />
+                <span className="font-mono-badge text-[10px] uppercase tracking-wider text-blue-400 font-bold px-1 py-0.2 rounded bg-blue-500/10 border border-blue-500/20 shrink-0">
+                  REVISED (NEW)
+                </span>
+                <span className="text-outline-variant/60">|</span>
+                <span className="font-body text-on-surface font-semibold text-xs truncate max-w-[200px]" title={new_policy.filename}>
+                  {new_policy.filename}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs shrink-0">
+                <span className="font-mono-badge text-[10.5px] text-outline px-1.5 py-0.2 rounded bg-surface-container">
+                  {new_policy.clause_count} Clauses · {new_policy.word_count} Words
+                </span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/10 text-emerald-400 font-mono-badge font-semibold border border-emerald-500/30 flex items-center gap-1">
+                  <CheckCircle2 className="size-3" />
+                  <span>Aligned</span>
+                </span>
+              </div>
+            </div>
+
+            {/* Right Content Pane */}
+            <div
+              ref={rightScrollRef}
+              onScroll={handleRightScroll}
+              className="flex-1 overflow-y-auto custom-scroll p-4 space-y-4 text-on-surface bg-background/50"
+            >
+              {changes.map((change, index) => {
+                const isSelected = change.change_id === selectedChangeId;
+                const newClause = change.before?.new_clause;
+                const newClauses = change.before?.new_clauses || (newClause ? [newClause] : []);
+                const newSectionTitle = newSectionContext.getEnclosingSection(newClause, newClauses);
+
+                return (
+                  <article
+                    key={`right-${change.change_id}`}
+                    id={`diff-right-${change.change_id}`}
+                    onClick={() => setSelectedChangeId(change.change_id)}
+                    className={`relative rounded-xl p-3.5 transition-all border cursor-pointer ${
+                      isSelected
+                        ? 'border-primary bg-primary/10 ring-1 ring-primary/40 shadow-md'
+                        : 'border-outline-variant/40 hover:border-outline-variant hover:bg-surface-container/30'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono-badge text-[10px] text-outline bg-surface-container px-1.5 py-0.5 rounded border border-outline-variant">
+                          #{index + 1} ({change.change_id})
+                        </span>
+                        <h4
+                          className="text-xs font-semibold text-on-surface truncate max-w-[220px]"
+                          title={newSectionTitle}
+                        >
+                          {newSectionTitle}
+                        </h4>
+                      </div>
+                      <span className="font-mono-badge text-[10px] text-outline">
+                        Pos #{newClause?.position ?? 'N/A'}
+                      </span>
+                    </div>
+
+                    {newClauses.length > 0 ? (
+                      <div className="space-y-2">
+                        {newClauses.map((c, i) => (
+                          <div
+                            key={i}
+                            className={`p-2.5 rounded-lg text-xs leading-relaxed font-clause-diff ${
+                              change.change_type === 'ADDED'
+                                ? 'bg-emerald-950/20 border-l-[3px] border-emerald-500 text-emerald-200'
+                                : change.change_type === 'MODIFIED'
+                                ? 'bg-blue-950/20 border-l-[3px] border-blue-500 text-blue-200'
+                                : 'bg-surface-container text-on-surface-variant'
+                            }`}
+                          >
+                            <p>{c.text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="p-3 rounded-lg bg-surface-container/40 border border-dashed border-outline-variant text-outline font-mono-code text-[11px] italic">
+                        [Clause completely removed in revision]
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+
+        {/* ── RIGHTMOST COLUMN: DISCREPANCY LEDGER SIDEBAR ── */}
+        <aside className="w-80 md:w-96 flex flex-col bg-surface-container border-l border-outline-variant shrink-0 overflow-hidden">
+          {/* Sidebar Top Filter Header */}
+          <div className="p-3.5 border-b border-outline-variant space-y-2.5 bg-surface-container-low">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-display font-semibold uppercase tracking-wider text-on-surface flex items-center gap-1.5">
+                <SlidersHorizontal className="size-3.5 text-primary" />
+                <span>Discrepancy Ledger</span>
+              </h3>
+              <span className="font-mono-badge text-[10.5px] text-outline">
+                {filteredChanges.length} / {changes.length}
               </span>
             </div>
 
-            {/* Metric Breakdown Pill Grid */}
-            <div className="grid grid-cols-2 gap-1.5 font-mono-badge text-[10px]">
-              <div className="flex items-center justify-between px-2 py-1 rounded bg-surface-container border border-outline-variant hover:border-tertiary/40 transition-colors">
-                <span className="text-tertiary flex items-center gap-1">
-                  <span className="size-1.5 rounded-full bg-tertiary" /> Added
-                </span>
-                <span className="text-on-surface font-bold">4</span>
-              </div>
-              <div className="flex items-center justify-between px-2 py-1 rounded bg-surface-container border border-outline-variant hover:border-secondary/40 transition-colors">
-                <span className="text-secondary flex items-center gap-1">
-                  <span className="size-1.5 rounded-full bg-secondary" /> Modified
-                </span>
-                <span className="text-on-surface font-bold">7</span>
-              </div>
-              <div className="flex items-center justify-between px-2 py-1 rounded bg-surface-container border border-outline-variant hover:border-error/40 transition-colors">
-                <span className="text-error flex items-center gap-1">
-                  <span className="size-1.5 rounded-full bg-error" /> Removed
-                </span>
-                <span className="text-on-surface font-bold">3</span>
-              </div>
-              <div className="flex items-center justify-between px-2 py-1 rounded bg-surface-container border border-outline-variant hover:border-outline transition-colors">
-                <span className="text-outline flex items-center gap-1">
-                  <span className="size-1.5 rounded-full bg-outline" /> Noise
-                </span>
-                <span className="text-on-surface-variant font-bold">1</span>
-              </div>
+            {/* Search Input */}
+            <div className="relative">
+              <Search className="size-3.5 text-outline absolute left-2.5 top-2.5" />
+              <input
+                type="text"
+                placeholder="Search clause text, rationale..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg pl-8 pr-3 py-1.5 text-xs text-on-surface placeholder:text-outline focus:border-primary focus:outline-none"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2 top-2 text-outline hover:text-on-surface"
+                >
+                  <X className="size-3.5" />
+                </button>
+              )}
             </div>
 
-            {/* Filter Navigation Tabs */}
-            <div className="flex items-center gap-1 mt-2.5 p-0.5 bg-surface-container-lowest rounded-md border border-outline-variant overflow-x-auto text-[10.5px] font-mono-badge">
-              <button
-                type="button"
-                onClick={() => setFilterImpact('all')}
-                className={`px-2 py-1 rounded shrink-0 transition-colors ${
-                  filterImpact === 'all'
-                    ? 'bg-surface-container-high text-primary font-bold shadow-sm'
-                    : 'text-on-surface-variant hover:text-on-surface'
-                }`}
-              >
-                All (14)
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterImpact('worse')}
-                className={`px-2 py-1 rounded shrink-0 transition-colors ${
-                  filterImpact === 'worse'
-                    ? 'bg-surface-container-high text-error font-bold shadow-sm'
-                    : 'text-on-surface-variant hover:text-on-surface'
-                }`}
-              >
-                Worse (6)
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterImpact('better')}
-                className={`px-2 py-1 rounded shrink-0 transition-colors ${
-                  filterImpact === 'better'
-                    ? 'bg-surface-container-high text-tertiary font-bold shadow-sm'
-                    : 'text-on-surface-variant hover:text-on-surface'
-                }`}
-              >
-                Better (3)
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterImpact('unclear')}
-                className={`px-2 py-1 rounded shrink-0 transition-colors ${
-                  filterImpact === 'unclear'
-                    ? 'bg-surface-container-high text-amber-400 font-bold shadow-sm'
-                    : 'text-on-surface-variant hover:text-on-surface'
-                }`}
-              >
-                Unclear (5)
-              </button>
+            {/* Filter Tabs */}
+            <div className="flex items-center gap-1 text-[11px] overflow-x-auto pb-1">
+              {[
+                { id: 'all', label: 'All' },
+                { id: 'worse', label: 'Worse' },
+                { id: 'better', label: 'Better' },
+                { id: 'unclear', label: 'Unclear' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setFilterImpact(tab.id)}
+                  className={`px-2 py-0.5 rounded font-mono-badge font-semibold cursor-pointer whitespace-nowrap transition-colors ${
+                    filterImpact === tab.id
+                      ? 'bg-primary text-on-primary'
+                      : 'bg-surface-container-high text-outline hover:text-on-surface'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Scrollable List of Change Cards */}
-          <div className="flex-1 overflow-y-auto custom-scroll p-2.5 space-y-2.5">
-            {filteredChanges.map((change) => {
-              const isSelected = selectedChangeId === change.id;
-              const isWorse = change.privacyImpact === 'PRIVACY_WORSE';
-              const isBetter = change.privacyImpact === 'PRIVACY_BETTER';
-              const isUnclear = change.privacyImpact === 'UNCLEAR';
+          {/* Change List */}
+          <div className="flex-1 overflow-y-auto custom-scroll p-3 space-y-2.5">
+            {filteredChanges.map((change, idx) => {
+              const isSelected = change.change_id === selectedChangeId;
+              const sim = change.before?.semantic_similarity;
 
               return (
                 <div
-                  key={change.id}
-                  onClick={() => setSelectedChangeId(change.id)}
-                  className={`p-2.5 rounded-lg bg-surface-container border transition-all cursor-pointer relative group shadow-sm ${
+                  key={change.change_id}
+                  onClick={() => setSelectedChangeId(change.change_id)}
+                  className={`p-3 rounded-xl border text-xs cursor-pointer transition-all ${
                     isSelected
-                      ? 'border-primary ring-1 ring-primary/40 bg-surface-container-high'
-                      : 'border-outline-variant hover:border-outline'
+                      ? 'bg-surface-container-lowest border-primary ring-1 ring-primary/40 shadow-md'
+                      : 'bg-surface-container-lowest/60 border-outline-variant hover:border-outline hover:bg-surface-container-lowest'
                   }`}
                 >
-                  {/* Left edge colored strip */}
-                  <div
-                    className={`absolute left-0 top-0 bottom-0 w-1 rounded-l ${
-                      isWorse ? 'bg-error' : isBetter ? 'bg-tertiary' : isUnclear ? 'bg-amber-400' : 'bg-outline'
-                    }`}
-                  />
-
-                  {/* Card Header */}
-                  <div className="flex items-center justify-between mb-1.5 pl-1.5">
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className={`font-mono-badge text-[10.5px] font-bold ${
-                          isWorse ? 'text-error' : isBetter ? 'text-tertiary' : 'text-amber-400'
-                        }`}
-                      >
-                        #{change.id}
-                      </span>
-                      <span className="font-mono-badge text-[9.5px] px-1 py-0.2 rounded bg-surface-container-highest text-on-surface">
-                        {change.sectionNew ? change.sectionNew.split(' ')[1] || 'Sec' : 'Sec'}
-                      </span>
-                    </div>
-                    <span className="font-mono-badge text-[9px] px-1.5 py-0.2 rounded bg-secondary-container/30 text-secondary-fixed border border-secondary/20 font-medium">
-                      {change.changeType}
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-mono-badge text-[10px] text-outline font-semibold">
+                      #{idx + 1} · {change.change_id}
                     </span>
+                    {typeof sim === 'number' && (
+                      <span className="font-mono-code text-[10px] text-primary" title="Semantic Similarity">
+                        Sim: {(sim * 100).toFixed(1)}%
+                      </span>
+                    )}
                   </div>
 
-                  {/* Impact Pill */}
-                  <div className="mb-2 pl-1.5">
-                    <span
-                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full font-mono-badge text-[9.5px] font-bold border ${
-                        isWorse
-                          ? 'bg-error-container/30 border-error/50 text-error'
-                          : isBetter
-                          ? 'bg-tertiary-container/20 border-tertiary/40 text-tertiary'
-                          : 'bg-amber-950/30 border-amber-500/40 text-amber-400'
-                      }`}
-                    >
-                      {change.privacyImpact}
-                    </span>
+                  {/* 3 Separate Badges: Change Type, Event Validity, Privacy Impact */}
+                  <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                    <ChangeTypeBadge type={change.change_type} size="sm" />
+                    <EventValidityBadge validity={change.event_validity} size="sm" />
+                    <PrivacyImpactBadge impact={change.privacy_impact} size="sm" />
                   </div>
 
-                  {/* Explanation */}
-                  <p className="font-body text-[11.5px] text-on-surface-variant leading-snug pl-1.5 group-hover:text-on-surface transition-colors">
-                    {change.explanation}
+                  {/* Section Label */}
+                  <p
+                    className="font-semibold text-on-surface truncate mb-1"
+                    title={resolveChangeCardHeading(change, oldSectionContext, newSectionContext)}
+                  >
+                    {resolveChangeCardHeading(change, oldSectionContext, newSectionContext)}
+                  </p>
+
+                  {/* Rationale or Preview */}
+                  <p className="text-[11.5px] text-on-surface-variant line-clamp-2 leading-relaxed">
+                    {change.classification?.rationale ||
+                      change.validation_reason ||
+                      change.before?.new_clause?.text ||
+                      change.before?.old_clause?.text}
                   </p>
                 </div>
               );
             })}
+
+            {filteredChanges.length === 0 && (
+              <div className="p-6 text-center text-xs text-outline space-y-1">
+                <p>No changes matching your filter.</p>
+              </div>
+            )}
           </div>
 
-          {/* Quick AI Forensic Insight Bottom Card */}
-          <div className="p-3 bg-surface-container-lowest border-t border-outline-variant shrink-0 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-primary">
-                <Sparkles className="size-3.5" />
-                <span className="font-mono-badge text-[10.5px] font-bold tracking-tight uppercase">
-                  Forensic Summary
+          {/* Selected Change Detail Footer in Sidebar */}
+          {selectedChange && (
+            <div className="p-3 border-t border-outline-variant bg-surface-container-low text-xs space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-mono-badge text-[10px] text-outline uppercase">
+                  Selected Detail
                 </span>
+                <button
+                  type="button"
+                  onClick={() => navigate('/changes')}
+                  className="text-primary hover:underline text-[11px] flex items-center gap-1 cursor-pointer font-semibold"
+                >
+                  <span>Open Full Ledger</span>
+                  <ExternalLink className="size-3" />
+                </button>
               </div>
-              <span className="font-mono-badge text-[9.5px] text-error font-bold px-1.5 py-0.2 rounded bg-error-container/30 border border-error/40">
-                HIGH RISK
-              </span>
+
+              {selectedChange.classification?.evidence && selectedChange.classification.evidence.length > 0 && (
+                <div className="p-2 rounded bg-surface-container-lowest border border-outline-variant font-mono-code text-[11px] text-on-surface-variant">
+                  <span className="text-outline block mb-0.5 font-bold">Matched Evidence:</span>
+                  <span className="text-primary">
+                    "{selectedChange.classification.evidence[0]}"
+                  </span>
+                </div>
+              )}
             </div>
-            <p className="font-body text-[11px] text-on-surface-variant leading-relaxed">
-              50% of analyzed modifications quietly broaden secondary telemetry usage rights despite cosmetic phrasing changes. High liability score in <strong className="text-on-surface">Section 4.2</strong>.
-            </p>
-            <div className="pt-1 flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => navigate(`/comparison/${comparison.id}/changes`)}
-                className="flex-1 h-7 rounded bg-surface-container hover:bg-surface-container-high border border-outline-variant text-[10.5px] font-body text-on-surface flex items-center justify-center gap-1 transition-colors cursor-pointer"
-              >
-                <span>Full Ledger</span>
-                <ArrowRight className="size-3 text-primary" />
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate(`/comparison/${comparison.id}/privacy-report`)}
-                className="h-7 px-2.5 rounded bg-primary-container text-on-primary-container text-[10.5px] font-mono-badge font-bold flex items-center justify-center hover:bg-primary transition-colors cursor-pointer"
-                title="View Privacy Report"
-              >
-                Audit Report
-              </button>
-            </div>
-          </div>
+          )}
         </aside>
       </main>
     </div>
