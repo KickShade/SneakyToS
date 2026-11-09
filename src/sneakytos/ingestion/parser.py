@@ -2,6 +2,7 @@
 from pathlib import Path
 import re
 from collections import Counter
+from statistics import median
 
 import pymupdf
 
@@ -72,6 +73,53 @@ def _strip_pdf_page_furniture(page_texts: list[str]) -> list[str]:
     return cleaned
 
 
+def _pdf_page_text(page) -> str:
+    """Extract text while marking short, visually distinct PDF headings."""
+    blocks = page.get_text("dict", sort=True).get("blocks", [])
+    text_blocks = [block for block in blocks if block.get("type", 0) == 0]
+    sizes = [
+        float(span["size"])
+        for block in text_blocks
+        for line in block.get("lines", [])
+        for span in line.get("spans", [])
+        if span.get("text", "").strip() and span.get("size")
+    ]
+    body_size = median(sizes) if sizes else 0.0
+    output_blocks = []
+
+    for block in text_blocks:
+        output_lines = []
+        for line in block.get("lines", []):
+            spans = line.get("spans", [])
+            text = "".join(span.get("text", "") for span in spans).strip()
+            if not text:
+                continue
+
+            words = re.findall(r"[\w'-]+", text)
+            sentence_like = bool(re.search(r"[.!?;]", text))
+            char_count = sum(len(span.get("text", "")) for span in spans) or 1
+            bold_chars = sum(
+                len(span.get("text", ""))
+                for span in spans
+                if int(span.get("flags", 0)) & 16
+                or re.search(r"bold|demi|semibold", span.get("font", ""), re.I)
+            )
+            max_size = max((float(span.get("size", 0)) for span in spans), default=0.0)
+            short_heading = 1 <= len(words) <= 12 and not sentence_like
+            visually_distinct = (
+                body_size > 0 and max_size >= body_size * 1.16
+            ) or bold_chars / char_count >= 0.8
+
+            if short_heading and visually_distinct:
+                text = "# " + text
+            output_lines.append(text)
+
+        if output_lines:
+            output_blocks.append("\n".join(output_lines))
+
+    return "\n\n".join(output_blocks)
+
+
 def extract_pdf(path: Path) -> str:
     pages = []
 
@@ -80,7 +128,7 @@ def extract_pdf(path: Path) -> str:
             raise ValueError("Encrypted PDFs are not supported.")
 
         for page in document:
-            pages.append(page.get_text("text"))
+            pages.append(_pdf_page_text(page))
 
     pages = _strip_pdf_page_furniture(pages)
     text = "\n\n".join(pages)

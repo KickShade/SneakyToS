@@ -71,6 +71,50 @@ def heading_text(line: str) -> str:
     return re.sub(r"^#{1,6}\s+", "", line).strip()
 
 
+KNOWN_HEADING_START_RE = re.compile(
+    r"^(?:information|personal data|personal information|how we|what we|"
+    r"why we|when we|where we|sharing|data sharing|data retention|"
+    r"your (?:rights|choices|privacy|information|data)|"
+    r"cookies|security|children|contact|changes to|international|"
+    r"third[- ]party|disclosure|retention|collection|use of|"
+    r"information about)\b",
+    re.IGNORECASE,
+)
+
+NUMBERED_HEADING_RE = re.compile(
+    r"^(?:(?:section|article)\s+)?(?:\d+(?:\.\d+)*|[IVXLCDM]+)[.)\s:-]+\S",
+    re.IGNORECASE,
+)
+
+
+def is_plain_text_heading(line: str) -> bool:
+    """Recognize conservative, standalone policy headings without Markdown."""
+    text = line.strip().rstrip(":").strip()
+    tokens = re.findall(r"[\w'-]+", text)
+
+    if not text or not 1 <= len(tokens) <= 12:
+        return False
+
+    if NUMBERED_HEADING_RE.match(text):
+        return True
+
+    # Complete prose is not a heading. A trailing colon is allowed for labels.
+    if re.search(r"[.!?;]", text):
+        return False
+
+    if KNOWN_HEADING_START_RE.match(text):
+        return True
+
+    letters = [char for char in text if char.isalpha()]
+    if len(letters) >= 4 and all(char.isupper() for char in letters):
+        return True
+
+    # Typical title case; require multiple title-cased words to avoid
+    # mistaking a sentence-initial capital for a heading.
+    title_words = [token for token in tokens if token[:1].isupper()]
+    return len(tokens) <= 9 and len(title_words) >= max(2, (len(tokens) + 1) // 2)
+
+
 def is_list_item(line: str) -> bool:
     return bool(re.match(r"^(?:[-*+]|\d+[.)])\s+", line))
 
@@ -275,6 +319,21 @@ def segment_policy(text: str) -> List[dict]:
             flush_buffer()
             current_section = line.strip()
             i += 2
+            continue
+
+        # Plain-text headings are recognized only when they are structurally
+        # isolated by a blank line or document boundary. This avoids treating
+        # ordinary sentence lines as section labels.
+        previous_is_boundary = i == 0 or not lines[i - 1]
+        next_is_boundary = i + 1 == len(lines) or not lines[i + 1]
+        if (
+            previous_is_boundary
+            and next_is_boundary
+            and is_plain_text_heading(line)
+        ):
+            flush_buffer()
+            current_section = line.strip().rstrip(":").strip()
+            i += 1
             continue
 
         # List item
