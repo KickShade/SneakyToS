@@ -1,0 +1,33 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sneakytos-backend
+    restart: unless-stopped
+    environment:
+      - PYTHONPATH=/app/src
+      - PORT=8000
+      - HF_HUB_OFFLINE=0
+      - SNEAKYTOS_CORS_ORIGINS=*
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    container_name: sneakytos-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_started
+
